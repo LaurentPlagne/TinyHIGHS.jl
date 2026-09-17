@@ -257,47 +257,46 @@ function make_infeasible_case(rng::AbstractRNG)
         randn(rng, num_col) * 5, col_lower, col_upper, row_lower, row_upper)
 end
 
+if !isfile(DUAL_ORACLE_BIN)
+    @info "oracle dual absent — tests ignorés (nécessite oracle/build.sh)"
+else
 @testset "oracle HiGHS — dual M3b (Dantzig, sans échelle ni perturbation)" begin
-    @test isfile(DUAL_ORACLE_BIN) ||
-          error("oracle absent : lancer julia_simplex/oracle/build.sh")
-    if isfile(DUAL_ORACLE_BIN)
-        rng = MersenneTwister(20260927)
-        cases = vcat([make_bounded_case(rng) for _ ∈ 1:20],
-            [make_free_column_case(rng) for _ ∈ 1:5],
-            [make_bounded_case(rng; num_row_max=18) for _ ∈ 1:5],
-            [make_transport_case(rng; m=15)],
-            [make_transport_case(rng; m=25)],
-            [make_infeasible_case(rng) for _ ∈ 1:10])
-        problems = String[]
-        phase1_seen = 0
-        phase2_seen = 0
-        maximize_seen = 0
-        fixed_seen = 0
-        infinite_seen = 0
-        max_iterations = 0
-        dantzig_options = SimplexOptions(
-            ; dual_simplex_cost_perturbation_multiplier=0.0,
-            simplex_dual_edge_weight_strategy=0)
-        for (icase, lp) ∈ enumerate(cases)
-            ours = port_solve(lp; options=dantzig_options)
-            theirs = run_dual_oracle(lp)
-            append!(problems, dual_case_problems(icase, lp, ours, theirs))
-            ours.phase1 > 0 && (phase1_seen += 1)
-            ours.phase2 > 0 && (phase2_seen += 1)
-            lp.sense == kMaximize && (maximize_seen += 1)
-            any(lp.col_lower .== lp.col_upper) && (fixed_seen += 1)
-            any(isinf, lp.row_lower) || any(isinf, lp.row_upper) ||
-                (infinite_seen += 1)
-            max_iterations = max(max_iterations, ours.iterations)
-        end
-        @test isempty(problems)
-        isempty(problems) || @info "écarts dual" problems[1:min(end, 10)]
-        # Couverture : les deux phases, les deux sens, colonnes fixes, bornes de
-        # ligne infinies, et au moins un cas > 50 itérations (ré-inversions).
-        @test phase1_seen > 0 && phase2_seen > 0
-        @test maximize_seen > 0 && fixed_seen > 0 && infinite_seen > 0
-        @test max_iterations > 50
+    rng = MersenneTwister(20260927)
+    cases = vcat([make_bounded_case(rng) for _ ∈ 1:20],
+        [make_free_column_case(rng) for _ ∈ 1:5],
+        [make_bounded_case(rng; num_row_max=18) for _ ∈ 1:5],
+        [make_transport_case(rng; m=15)],
+        [make_transport_case(rng; m=25)],
+        [make_infeasible_case(rng) for _ ∈ 1:10])
+    problems = String[]
+    phase1_seen = 0
+    phase2_seen = 0
+    maximize_seen = 0
+    fixed_seen = 0
+    infinite_seen = 0
+    max_iterations = 0
+    dantzig_options = SimplexOptions(
+        ; dual_simplex_cost_perturbation_multiplier=0.0,
+        simplex_dual_edge_weight_strategy=0)
+    for (icase, lp) ∈ enumerate(cases)
+        ours = port_solve(lp; options=dantzig_options)
+        theirs = run_dual_oracle(lp)
+        append!(problems, dual_case_problems(icase, lp, ours, theirs))
+        ours.phase1 > 0 && (phase1_seen += 1)
+        ours.phase2 > 0 && (phase2_seen += 1)
+        lp.sense == kMaximize && (maximize_seen += 1)
+        any(lp.col_lower .== lp.col_upper) && (fixed_seen += 1)
+        any(isinf, lp.row_lower) || any(isinf, lp.row_upper) ||
+            (infinite_seen += 1)
+        max_iterations = max(max_iterations, ours.iterations)
     end
+    @test isempty(problems)
+    isempty(problems) || @info "écarts dual" problems[1:min(end, 10)]
+    # Couverture : les deux phases, les deux sens, colonnes fixes, bornes de
+    # ligne infinies, et au moins un cas > 50 itérations (ré-inversions).
+    @test phase1_seen > 0 && phase2_seen > 0
+    @test maximize_seen > 0 && fixed_seen > 0 && infinite_seen > 0
+    @test max_iterations > 50
 end
 
 @testset "oracle HiGHS — dual avec perturbation de coûts (défauts HiGHS)" begin
@@ -444,6 +443,7 @@ end
     @test ours1.status == theirs1.status && ours1.iterations == theirs1.iterations
     @test abs(ours1.objective - theirs1.objective) <=
           1e-12 + 1e-12 * abs(theirs1.objective)
+end
 end
 
 @testset "DualSolver — reset! bit-à-bit et non-divergence" begin

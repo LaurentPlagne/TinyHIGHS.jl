@@ -31,19 +31,19 @@ function random_sequence(rng::TinyHiGHS.HighsRandom)
     return tokens
 end
 
+if !isfile(RANDOM_ORACLE_BIN)
+    @info "oracle HighsRandom absent — tests ignorés (nécessite oracle/build.sh)"
+else
 @testset "oracle C++ — HighsRandom (source gelée)" begin
-    @test isfile(RANDOM_ORACLE_BIN) ||
-          error("oracle absent : lancer julia_simplex/oracle/build.sh")
-    if isfile(RANDOM_ORACLE_BIN)
-        expected = random_sequence(TinyHiGHS.HighsRandom(0))
-        got = split(read(`$RANDOM_ORACLE_BIN`, String))
-        @test length(expected) == length(got)
-        mismatches = ["position $i : $(expected[i]) ≠ oracle $(got[i])"
-                      for i ∈ eachindex(expected) if expected[i] != got[i]]
-        @test isempty(mismatches)
-        isempty(mismatches) || @info "écarts RNG" mismatches[1:min(end, 8)]
-        # Sensibilité : un décalage d'un cran dans la suite est vu.
-        shifted = vcat(expected[2:end], expected[end])
-        @test any(expected[i] != shifted[i] for i ∈ eachindex(expected))
-    end
+    expected = random_sequence(TinyHiGHS.HighsRandom(0))
+    got = split(read(`$RANDOM_ORACLE_BIN`, String))
+    @test length(expected) == length(got)
+    mismatches = ["position $i : $(expected[i]) ≠ oracle $(got[i])"
+                  for i ∈ eachindex(expected) if expected[i] != got[i]]
+    @test isempty(mismatches)
+    isempty(mismatches) || @info "écarts RNG" mismatches[1:min(end, 8)]
+    # Sensibilité : un décalage d'un cran dans la suite est vu.
+    shifted = vcat(expected[2:end], expected[end])
+    @test any(expected[i] != shifted[i] for i ∈ eachindex(expected))
+end
 end

@@ -365,8 +365,10 @@ function compare_primal_corpus(gen, ncases::Int, seed::Int;
     return problems, refus, couverture
 end
 
-if isfile(PRIMAL_ORACLE_BIN)
-    @testset "primal Dantzig — base logique primalement faisable" begin
+if !isfile(PRIMAL_ORACLE_BIN)
+    @info "oracle primal absent — tests ignorés (nécessite oracle/build.sh)"
+else
+@testset "primal Dantzig — base logique primalement faisable" begin
         problems, refus, couverture = compare_primal_corpus(
             make_primal_feasible_case, 40, 12345)
         @test isempty(problems)

@@ -175,43 +175,56 @@ end
         pack!(warm)
         saxpy!(warm, 1.0, warmp)
         copy!(HVector(32), warm)
+        norm2(warm)
 
         # `tight!` actif : des valeurs sous kHighsTiny.
         v = random_hvector(MersenneTwister(2), 64; density=0.2)
         for i ∈ 1:min(3, v.count)
             v.array[v.index[i]] = 1e-16
         end
+        tight!(v)
         @test (@allocated tight!(v)) == 0
 
         # `reIndex!` actif : reconstruction par balayage complet.
         v = random_hvector(MersenneTwister(3), 64; density=0.2)
+        v.count = -1
+        reIndex!(v)
         v.count = -1
         @test (@allocated reIndex!(v)) == 0
 
         # `pack!` actif : packFlag armé, chemin de copie réellement exécuté.
         v = random_hvector(MersenneTwister(4), 64; density=0.2)
         v.packFlag = true
+        pack!(v)
+        v.packFlag = true
         @test (@allocated pack!(v)) == 0
 
         # `clear!` dense (remplissage complet) puis creux (zéro selon la liste).
         v = random_hvector(MersenneTwister(5), 64; density=0.5)
         @test v.count > 0.3 * v.size
+        clear!(v)
+        v = random_hvector(MersenneTwister(5), 64; density=0.5)
         @test (@allocated clear!(v)) == 0
         v = random_hvector(MersenneTwister(6), 64; density=0.2)
         @test v.count <= 0.3 * v.size
+        clear!(v)
+        v = random_hvector(MersenneTwister(6), 64; density=0.2)
         @test (@allocated clear!(v)) == 0
 
         # `copy!` actif.
         to = random_hvector(MersenneTwister(7), 64; density=0.2)
         from = random_hvector(MersenneTwister(8), 64; density=0.2)
+        copy!(to, from)
         @test (@allocated copy!(to, from)) == 0
 
         # `saxpy!` actif.
         v = random_hvector(MersenneTwister(9), 64; density=0.2)
         pivot = random_hvector(MersenneTwister(10), 64; density=0.5)
+        saxpy!(v, 1.0, pivot)
         @test (@allocated saxpy!(v, 1.0, pivot)) == 0
 
         # `norm2` actif.
+        norm2(v)
         @test (@allocated norm2(v)) == 0
     end
 

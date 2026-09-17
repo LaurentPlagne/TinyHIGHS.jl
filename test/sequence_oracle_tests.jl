@@ -286,8 +286,10 @@ function sequence_problems(icase::Int, ours, theirs,
     return problems
 end
 
-if isfile(SEQUENCE_ORACLE_BIN)
-    @testset "M5 — mutations du LP et warm start" begin
+if !isfile(SEQUENCE_ORACLE_BIN)
+    @info "oracle séquence absent — tests ignorés (nécessite oracle/build.sh)"
+else
+@testset "M5 — mutations du LP et warm start" begin
         rng = MersenneTwister(20261020)
         problems = String[]
         statuses = Int[]

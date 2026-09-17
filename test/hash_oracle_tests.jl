@@ -25,23 +25,23 @@ function hash_sequence()
     return hashes
 end
 
+if !isfile(HASH_ORACLE_BIN)
+    @info "oracle HighsHashHelpers absent — tests ignorés (nécessite oracle/build.sh)"
+else
 @testset "oracle C++ — HighsHashHelpers (source gelée)" begin
-    @test isfile(HASH_ORACLE_BIN) ||
-          error("oracle absent : lancer julia_simplex/oracle/build.sh")
-    if isfile(HASH_ORACLE_BIN)
-        expected = hash_sequence()
-        got = split(read(`$HASH_ORACLE_BIN`, String))
-        @test length(expected) == length(got)
-        mismatches = ["position $i : $(expected[i]) ≠ oracle $(got[i])"
-                      for i ∈ eachindex(expected) if expected[i] != got[i]]
-        @test isempty(mismatches)
-        isempty(mismatches) || @info "écarts hachage" mismatches[1:min(end, 8)]
-        # Sensibilité : une combinaison et son inverse ne redonnent pas le même
-        # hachage (l'inverse doit revenir à l'état antérieur, pas rester).
-        hash0 = UInt64(0)
-        hash1 = TinyHiGHS.sparse_combine(hash0, 7)
-        hash2 = TinyHiGHS.sparse_inverse_combine(hash1, 7)
-        @test hash2 == hash0
-        @test hash1 != hash0
-    end
+    expected = hash_sequence()
+    got = split(read(`$HASH_ORACLE_BIN`, String))
+    @test length(expected) == length(got)
+    mismatches = ["position $i : $(expected[i]) ≠ oracle $(got[i])"
+                  for i ∈ eachindex(expected) if expected[i] != got[i]]
+    @test isempty(mismatches)
+    isempty(mismatches) || @info "écarts hachage" mismatches[1:min(end, 8)]
+    # Sensibilité : une combinaison et son inverse ne redonnent pas le même
+    # hachage (l'inverse doit revenir à l'état antérieur, pas rester).
+    hash0 = UInt64(0)
+    hash1 = TinyHiGHS.sparse_combine(hash0, 7)
+    hash2 = TinyHiGHS.sparse_inverse_combine(hash1, 7)
+    @test hash2 == hash0
+    @test hash1 != hash0
+end
 end

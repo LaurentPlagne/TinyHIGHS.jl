@@ -302,36 +302,36 @@ function port_matrix_case(c::MatrixCase)
     return out
 end
 
+if !isfile(MATRIX_ORACLE_BIN)
+    @info "oracle SparseMatrix absent — tests ignorés (nécessite oracle/build.sh)"
+else
 @testset "oracle C++ — SparseMatrix (source gelée)" begin
-    @test isfile(MATRIX_ORACLE_BIN) ||
-          error("oracle absent : lancer julia_simplex/oracle/build.sh")
-    if isfile(MATRIX_ORACLE_BIN)
-        rng = MersenneTwister(20260918)
-        cases = [random_matrix_case(rng) for _ ∈ 1:40]
-        # Branche `cleanup!` (annulations exactes), hyper-sparse puis dense.
-        push!(cases, cleanup_matrix_case(false), cleanup_matrix_case(true))
-        input = IOBuffer()
-        println(input, length(cases))
-        for c ∈ cases
-            write_matrix_case(input, c)
-        end
-        text = run_matrix_oracle(String(take!(input)))
-        tokens = split(text)
-        pos = 1
-        problems = String[]
-        for (ic, c) ∈ enumerate(cases)
-            expected = port_matrix_case(c)
-            for (ie, token) ∈ enumerate(expected)
-                got = tokens[pos]
-                if got != token
-                    push!(problems, "cas $ic jeton $ie : $token ≠ $got")
-                end
-                pos += 1
-            end
-        end
-        pos == length(tokens) + 1 ||
-            push!(problems, "flux non consommé : $pos ≠ $(length(tokens) + 1)")
-        @test isempty(problems)
-        isempty(problems) || @info "écarts" problems[1:min(end, 10)]
+    rng = MersenneTwister(20260918)
+    cases = [random_matrix_case(rng) for _ ∈ 1:40]
+    # Branche `cleanup!` (annulations exactes), hyper-sparse puis dense.
+    push!(cases, cleanup_matrix_case(false), cleanup_matrix_case(true))
+    input = IOBuffer()
+    println(input, length(cases))
+    for c ∈ cases
+        write_matrix_case(input, c)
     end
+    text = run_matrix_oracle(String(take!(input)))
+    tokens = split(text)
+    pos = 1
+    problems = String[]
+    for (icase, c) ∈ enumerate(cases)
+        expected = port_matrix_case(c)
+        for (ie, token) ∈ enumerate(expected)
+            got = tokens[pos]
+            if got != token
+                push!(problems, "cas $icase jeton $ie : $token ≠ $got")
+            end
+            pos += 1
+        end
+    end
+    pos == length(tokens) + 1 ||
+        push!(problems, "flux non consommé : $pos ≠ $(length(tokens) + 1)")
+    @test isempty(problems)
+    isempty(problems) || @info "écarts" problems[1:min(end, 10)]
+end
 end
