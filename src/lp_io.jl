@@ -6,8 +6,21 @@
 """
     write_lp(filename_or_io, lp::SimplexLp; var_names=nothing, row_names=nothing)
 
-Écrit un `SimplexLp` au format standard `.lp` (CPLEX LP), compatible avec HiGHS,
-CPLEX, Gurobi, Clp, etc.
+Write a `SimplexLp` instance to standard CPLEX `.lp` format (plain text).
+
+# Arguments
+- `filename_or_io`: Either an `IO` stream or a `String` containing the destination file path.
+- `lp::SimplexLp`: The linear programming model to export. Constraint matrix `lp.a_matrix` must be in column-wise format.
+- `var_names`: Optional `Vector{String}` of variable names (length `num_col`). Defaults to `c0`, `c1`, ...
+- `row_names`: Optional `Vector{String}` of constraint names (length `num_row`). Defaults to `r0`, `r1`, ...
+
+# Example
+```julia
+using TinyHiGHS
+
+lp = read_lp("model.lp")
+write_lp("exported.lp", lp)
+```
 """
 function write_lp(io::IO, lp::SimplexLp; var_names=nothing, row_names=nothing)
     m = lp.a_matrix
@@ -102,12 +115,29 @@ end
 """
     read_lp(filename_or_io) -> SimplexLp
 
-Lit un fichier au format CPLEX `.lp` et construit une instance de `SimplexLp`.
-Supporte les sections :
-- `Minimize` / `Maximize`
-- `Subject To` / `st` / `such that`
-- `Bounds`
-- `End`
+Parse a linear program from a CPLEX `.lp` file or `IO` stream into a `SimplexLp`.
+
+This native parser is implemented in 100% pure Julia stdlib without any external C/C++
+dependencies. It supports:
+- Objective sense: `Minimize` / `Maximize` (and abbreviations `min`, `max`)
+- Linear combinations of terms with arbitrary signs and floating-point coefficients
+- Constraints: `Subject To`, `st`, `s.t.`, `such that` with `<=`, `>=`, `=` relations
+- Variable bounds: `Bounds` section with lower bounds, upper bounds, equality, and `free` variables
+- Single-line and multi-line comments starting with `\\`
+
+# Arguments
+- `filename_or_io`: A file path (`AbstractString`) or an open `IO` stream.
+
+# Returns
+- A `SimplexLp` model ready to be solved or inspected.
+
+# Example
+```julia
+using TinyHiGHS
+
+lp = read_lp("instance.lp")
+println("Columns: ", lp.num_col, ", Rows: ", lp.num_row)
+```
 """
 function read_lp(filename_or_io)::SimplexLp
     lines = if filename_or_io isa IO
@@ -397,10 +427,25 @@ end
 # ==============================================================================
 
 """
-    solve!(engine::SimplexEngine; algorithm=kDual) -> ModelStatus
+    solve!(engine::SimplexEngine; algorithm::SimplexAlgorithm=kDual) -> ModelStatus
 
-Résout le LP attaché à `engine` avec l'algorithme spécifié (`kDual` par défaut).
-Initialise le solveur si nécessaire.
+Solve the linear program currently loaded into `engine`.
+
+If the engine state is fresh or has been modified (bounds, costs, or matrix entries),
+it automatically initialises the basis, solves phases 1 and 2, and performs required
+rebuilds and refactorizations in-place.
+
+# Arguments
+- `engine::SimplexEngine`: The persistent simplex state and preallocated workspace buffers.
+- `algorithm::SimplexAlgorithm`: Optimization algorithm to use, either `kDual` (dual simplex, default) or `kPrimal` (primal simplex).
+
+# Returns
+- `ModelStatus`: Optimization outcome (e.g., `kModelStatusOptimal`, `kModelStatusInfeasible`, `kModelStatusUnbounded`).
+
+# Performance Note
+When reusing the same `engine` across a sequence of resolves with modified bounds or costs
+(`change_col_bounds!`, `change_row_bounds!`, `change_cols_cost!`), this method achieves
+**zero heap allocations** and microsecond warm-start resolution times.
 """
 function solve!(engine::SimplexEngine; algorithm=kDual)
     initialise_for_solve!(engine)
@@ -410,9 +455,30 @@ function solve!(engine::SimplexEngine; algorithm=kDual)
 end
 
 """
-    solve_lp(lp_or_path; algorithm=kDual) -> (status, objective_value, engine)
+    solve_lp(lp_or_path; algorithm::SimplexAlgorithm=kDual) -> (status, objective_value, engine)
 
-Charge (si chemin de fichier) et résout le problème linéaire avec TinyHiGHS.
+Convenience high-level entry point to load (if path) and solve a linear program.
+
+# Arguments
+- `lp_or_path`: Either a `SimplexLp` instance or a `String` representing a path to a `.lp` file.
+- `algorithm::SimplexAlgorithm`: Solver algorithm (`kDual` or `kPrimal`, defaults to `kDual`).
+
+# Returns
+A 3-tuple `(status, objective_value, engine)`:
+- `status::ModelStatus`: Final model status (e.g., `kModelStatusOptimal`).
+- `objective_value::Float64`: Primal objective value at termination.
+- `engine::SimplexEngine`: The solved simplex engine instance, allowing extraction of primal/dual solution vectors and basis information.
+
+# Example
+```julia
+using TinyHiGHS
+
+status, obj, engine = solve_lp("instances/benchmarks/netflow_small_01.lp")
+if status == kModelStatusOptimal
+    println("Optimal objective: ", obj)
+    println("Primal values: ", engine.info.workValue[1:engine.lp.num_col])
+end
+```
 """
 function solve_lp(lp::SimplexLp; algorithm=kDual)
     engine = SimplexEngine(lp)

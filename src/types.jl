@@ -8,8 +8,15 @@
 """
     SimplexBasis(num_col, num_row)
 
-Base du simplexe. La source laisse les tableaux non initialisés à `setup` ; on
-les met à zéro pour un état de départ déterministe.
+Representation of the simplex basis.
+
+Tracks basic variables and non-basic statuses:
+- `basicIndex`: 1-based variable indices currently in the basis for each row (`1:num_row`).
+  Indices `1:num_col` represent structural columns, while `(num_col+1):(num_col+num_row)`
+  represent row slacks / logical variables.
+- `nonbasicFlag`: Vector of flags (length `num_col + num_row`), `1` if non-basic, `0` if basic.
+- `nonbasicMove`: Non-basic move direction (`+1` = at lower bound, `-1` = at upper bound, `0` = fixed/free).
+- `hash`: 64-bit basis fingerprint used for cycling and stall detection.
 """
 mutable struct SimplexBasis
     basicIndex::Vector{Int}
@@ -19,7 +26,7 @@ mutable struct SimplexBasis
 end
 
 function SimplexBasis(num_col::Int, num_row::Int)
-    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("tailles négatives"))
+    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions must be non-negative"))
     return SimplexBasis(zeros(Int, num_row), zeros(Int8, num_col + num_row),
         zeros(Int8, num_col + num_row), UInt64(0))
 end
@@ -27,9 +34,8 @@ end
 """
     SimplexStatus()
 
-Sous-ensemble de `HighsSimplexStatus` nécessaire à M3b. Les drapeaux sont
-posés par les routines du moteur (`set_basis!`, `compute_factor!`,
-`update_pivots!`).
+Internal state tracking for the simplex solver, tracking the validity of cached factorizations,
+matrix views, pricing weights, and objective values.
 """
 mutable struct SimplexStatus
     has_basis::Bool
@@ -128,8 +134,19 @@ end
 """
     SimplexInfo(num_col, num_row)
 
-Sous-ensemble des vecteurs de travail de `HighsSimplexInfo` nécessaires au port.
-Les jalons suivants l'étendront ; rien d'autre n'est anticipé ici.
+Persistent working buffers, primal/dual vectors, objective values, and algorithmic control
+state for `SimplexEngine`.
+
+All buffers are sized to `num_col + num_row` (or `num_row`) and preallocated up-front.
+During iterative resolves, these buffers are reused in-place with zero memory allocation.
+
+Key fields:
+- `workValue`: Current values of all variables (structural + slacks).
+- `workCost`: Objective coefficients (adjusted for sense and shifts).
+- `workDual`: Dual values (reduced costs for non-basics, dual multipliers for basics).
+- `workLower` / `workUpper`: Active variable bounds.
+- `primal_objective_value` / `dual_objective_value`: Real objective values.
+- `num_primal_infeasibilities` / `num_dual_infeasibilities`: Infeasibility counters.
 """
 mutable struct SimplexInfo
     workCost::Vector{Float64}

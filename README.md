@@ -1,6 +1,7 @@
 # TinyHiGHS.jl
 
 [![CI](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/CI.yml)
+[![Documentation](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/Documentation.yml/badge.svg)](https://LaurentPlagne.github.io/TinyHIGHS.jl/dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **TinyHiGHS.jl** is a lightweight, zero-allocation, pure-Julia experimental port of the **dual and primal revised simplex engines** from [HiGHS](https://highs.dev/) (the premier open-source LP/MIP solver developed at the University of Edinburgh).

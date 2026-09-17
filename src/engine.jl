@@ -21,14 +21,21 @@
     SimplexLp(num_col, num_row, a_matrix, col_cost, col_lower, col_upper,
               row_lower, row_upper; offset = 0.0, sense = kMinimize)
 
-Modèle LP du simplexe (`HighsLp`) : `a_matrix` doit être en vue colwise
-(1-based, `colptr` en `start`), les vecteurs font `num_col` (colonnes) ou
-`num_row` (lignes). `offset` est le coût constant et `sense` vaut `kMinimize`
-ou `kMaximize` ; c'est le seul usage de `sense` dans le noyau : les coûts de
-travail valent `sense * col_cost`.
-`scale`/`is_scaled` portent l'état d'échelles du niveau LP (`HighsLp::scale_`/
-`is_scaled_`) : les facteurs sont conservés d'un solve à l'autre, mais le
-modèle rendu à l'appelant est **non échelonné** (comme `Highs::run`).
+Linear programming model definition.
+
+# Fields
+- `num_col::Int`: Number of structural columns (variables).
+- `num_row::Int`: Number of constraints (rows).
+- `a_matrix::SparseMatrix`: Constraint matrix in 1-based column-wise (CSC) representation.
+- `col_cost::Vector{Float64}`: Objective linear coefficients (length `num_col`).
+- `col_lower::Vector{Float64}`: Variable lower bounds (length `num_col`).
+- `col_upper::Vector{Float64}`: Variable upper bounds (length `num_col`).
+- `row_lower::Vector{Float64}`: Constraint lower bounds (length `num_row`).
+- `row_upper::Vector{Float64}`: Constraint upper bounds (length `num_row`).
+- `offset::Float64`: Objective constant offset (defaults to `0.0`).
+- `sense::ObjSense`: Optimization direction (`kMinimize` or `kMaximize`).
+- `scale::Scale`: Optional scaling factors.
+- `is_scaled::Bool`: Whether the model is currently scaled.
 """
 mutable struct SimplexLp
     num_col::Int
@@ -50,16 +57,16 @@ function SimplexLp(num_col::Int, num_row::Int, a_matrix::SparseMatrix,
     col_upper::Vector{Float64}, row_lower::Vector{Float64},
     row_upper::Vector{Float64}; offset::Float64=0.0,
     sense::ObjSense=kMinimize)
-    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions négatives"))
+    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions must be non-negative"))
     (a_matrix.num_col == num_col && a_matrix.num_row == num_row) ||
-        throw(ArgumentError("dimensions de a_matrix incohérentes"))
+        throw(ArgumentError("dimensions of a_matrix mismatch num_col/num_row"))
     is_colwise(a_matrix) ||
-        throw(ArgumentError("a_matrix doit être en vue colwise"))
+        throw(ArgumentError("a_matrix must be column-wise"))
     (length(col_cost) == num_col && length(col_lower) == num_col &&
      length(col_upper) == num_col) ||
-        throw(ArgumentError("tailles de coûts/bornes colonnes incohérentes"))
+        throw(ArgumentError("column vector lengths mismatch num_col"))
     (length(row_lower) == num_row && length(row_upper) == num_row) ||
-        throw(ArgumentError("tailles de bornes lignes incohérentes"))
+        throw(ArgumentError("row vector lengths mismatch num_row"))
     return SimplexLp(num_col, num_row, a_matrix, col_cost, col_lower, col_upper,
         row_lower, row_upper, offset, sense, Scale(), false)
 end
@@ -67,11 +74,16 @@ end
 """
     SimplexOptions(; ...)
 
-Sous-ensemble de `HighsOptions` lu par le port. Défauts identiques à HiGHS
-1.15.1. `simplex_dual_edge_weight_strategy` ∈ {-1 choose, 0 Dantzig, 1 Devex,
-2 steepest edge} ; « choose » part en DSE et peut basculer vers Devex comme la
-source. `cost_scale_factor` entre dans les coûts de travail et l'objectif
-dual, pas dans l'objectif primal (`HEkk::cost_scale_` reste `1.0`).
+Configuration parameters for the simplex engine, matching HiGHS default settings.
+
+Key options:
+- `primal_feasibility_tolerance`: Primal tolerance (default `1e-7`).
+- `dual_feasibility_tolerance`: Dual tolerance (default `1e-7`).
+- `time_limit`: Time limit in seconds (default `Inf`).
+- `simplex_iteration_limit`: Maximum number of simplex iterations.
+- `simplex_dual_edge_weight_strategy`: Dual pricing edge weight strategy (`kSimplexEdgeWeightStrategyChoose`, `kSimplexEdgeWeightStrategyDantzig`, `kSimplexEdgeWeightStrategyDevex`, `kSimplexEdgeWeightStrategySteepestEdge`).
+- `simplex_update_limit`: Maximum number of basis updates before full refactorization (default `5000`).
+- `random_seed`: Seed for deterministic pseudo-random number generator (perturbations).
 """
 struct SimplexOptions
     cost_scale_factor::Int
@@ -139,11 +151,20 @@ SimplexOptions(; cost_scale_factor::Int=0,
 """
     SimplexEngine(lp, options = SimplexOptions(); basis = nothing)
 
-État du simplexe (`HEkk`) : modèle, options, base, espace de travail et NLA.
-`basis.basicIndex`, `nla.basic_index` et `nla.factor.basic_index` sont **le
-même tableau** (comme le pointeur partagé de `HSimplexNla`) : `build!` le
-permute et les valeurs primales suivent l'ordre des colonnes de base. `basis`
-peut être fourni (base capturée), il doit alors avoir les dimensions du LP.
+Core revised simplex solver engine equivalent to HiGHS's `HEkk`.
+
+Encapsulates:
+- The linear model (`lp::SimplexLp`).
+- Solver configuration options (`options::SimplexOptions`).
+- Current basis state (`basis::SimplexBasis`).
+- Sized persistent working buffers (`info::SimplexInfo`), reused across solves without reallocating.
+- Numerical Linear Algebra and basis LU factorization state (`nla::Nla`).
+- Pseudo-random number generator for numerical perturbation (`random::HighsRandom`).
+
+# Warm-Starting
+`SimplexEngine` is designed for high-frequency repeated solves: modify bounds or costs using
+`change_col_bounds!`, `change_row_bounds!`, `change_cols_cost!` and call `solve!(engine)` to
+perform warm-start re-optimization with zero memory allocation.
 """
 mutable struct SimplexEngine
     lp::SimplexLp
@@ -481,25 +502,34 @@ end
 # `infeasible_bounds_ok!` les répare ou rend le LP infaisable à la résolution.
 # Seul le clamp `infinite_bound` (1e30) d'`assessBounds` n'est pas porté.
 
-"""`Highs_changeColBounds` : bornes d'une colonne du LP."""
+"""
+    change_col_bounds!(e::SimplexEngine, iCol::Int, lower::Float64, upper::Float64)
+
+Update lower and upper bounds of a single column variable `iCol` (1-based) in-place.
+Signals the engine that bounds have changed while keeping the basis intact for warm-starting.
+"""
 function change_col_bounds!(e::SimplexEngine, iCol::Int, lower::Float64,
     upper::Float64)
-    (1 <= iCol <= e.lp.num_col) || throw(ArgumentError("colonne $iCol hors LP"))
+    (1 <= iCol <= e.lp.num_col) || throw(ArgumentError("column $iCol out of bounds"))
     e.lp.col_lower[iCol] = lower
     e.lp.col_upper[iCol] = upper
     update_status!(e, kLpActionNewBounds)
     return e
 end
 
-"""`Highs_changeColsBoundsBySet`/`ByRange` — bornes d'un lot de colonnes."""
+"""
+    change_cols_bounds!(e::SimplexEngine, iCols, lowers, uppers)
+
+Update bounds for a collection of columns in-place.
+"""
 function change_cols_bounds!(e::SimplexEngine, iCols::AbstractVector{Int},
     lowers::AbstractVector{Float64}, uppers::AbstractVector{Float64})
     (length(iCols) == length(lowers) == length(uppers)) ||
-        throw(ArgumentError("tailles incohérentes dans change_cols_bounds!"))
+        throw(ArgumentError("dimension mismatch in change_cols_bounds!"))
     for k ∈ eachindex(iCols)
         iCol = iCols[k]
         (1 <= iCol <= e.lp.num_col) ||
-            throw(ArgumentError("colonne $iCol hors LP"))
+            throw(ArgumentError("column $iCol out of bounds"))
         e.lp.col_lower[iCol] = lowers[k]
         e.lp.col_upper[iCol] = uppers[k]
     end
@@ -507,25 +537,33 @@ function change_cols_bounds!(e::SimplexEngine, iCols::AbstractVector{Int},
     return e
 end
 
-"""`Highs_changeRowBounds` : bornes d'une ligne du LP."""
+"""
+    change_row_bounds!(e::SimplexEngine, iRow::Int, lower::Float64, upper::Float64)
+
+Update lower and upper bounds of a single constraint row `iRow` (1-based) in-place.
+"""
 function change_row_bounds!(e::SimplexEngine, iRow::Int, lower::Float64,
     upper::Float64)
-    (1 <= iRow <= e.lp.num_row) || throw(ArgumentError("ligne $iRow hors LP"))
+    (1 <= iRow <= e.lp.num_row) || throw(ArgumentError("row $iRow out of bounds"))
     e.lp.row_lower[iRow] = lower
     e.lp.row_upper[iRow] = upper
     update_status!(e, kLpActionNewBounds)
     return e
 end
 
-"""`Highs_changeRowsBoundsByRange` — bornes d'un lot de lignes."""
+"""
+    change_rows_bounds!(e::SimplexEngine, iRows, lowers, uppers)
+
+Update bounds for a collection of constraint rows in-place.
+"""
 function change_rows_bounds!(e::SimplexEngine, iRows::AbstractVector{Int},
     lowers::AbstractVector{Float64}, uppers::AbstractVector{Float64})
     (length(iRows) == length(lowers) == length(uppers)) ||
-        throw(ArgumentError("tailles incohérentes dans change_rows_bounds!"))
+        throw(ArgumentError("dimension mismatch in change_rows_bounds!"))
     for k ∈ eachindex(iRows)
         iRow = iRows[k]
         (1 <= iRow <= e.lp.num_row) ||
-            throw(ArgumentError("ligne $iRow hors LP"))
+            throw(ArgumentError("row $iRow out of bounds"))
         e.lp.row_lower[iRow] = lowers[k]
         e.lp.row_upper[iRow] = uppers[k]
     end
@@ -533,15 +571,19 @@ function change_rows_bounds!(e::SimplexEngine, iRows::AbstractVector{Int},
     return e
 end
 
-"""`Highs_changeColsCostBySet` — coûts d'un lot de colonnes."""
+"""
+    change_cols_cost!(e::SimplexEngine, iCols, costs)
+
+Update objective cost coefficients for a collection of columns in-place.
+"""
 function change_cols_cost!(e::SimplexEngine, iCols::AbstractVector{Int},
     costs::AbstractVector{Float64})
     length(iCols) == length(costs) ||
-        throw(ArgumentError("tailles incohérentes dans change_cols_cost!"))
+        throw(ArgumentError("dimension mismatch in change_cols_cost!"))
     for k ∈ eachindex(iCols)
         iCol = iCols[k]
         (1 <= iCol <= e.lp.num_col) ||
-            throw(ArgumentError("colonne $iCol hors LP"))
+            throw(ArgumentError("column $iCol out of bounds"))
         e.lp.col_cost[iCol] = costs[k]
     end
     update_status!(e, kLpActionNewCosts)

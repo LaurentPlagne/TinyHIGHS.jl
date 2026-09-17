@@ -13,9 +13,13 @@
 const kDensityForIndexing = 0.4
 
 """
-    Nla(factor, num_col, num_row, basic_index; scale=nothing)
+    Nla(factor, num_col, num_row; scale = nothing)
 
-Interface de `HFactor` avec échelles NLA (`HSimplexNla`).
+Numerical Linear Algebra (NLA) abstraction layer over `HFactor`, equivalent to HiGHS's `HSimplexNla`.
+
+Coordinates scaled-space and original-space transformations, managing row and column
+scaling factors during forward transformation (FTRAN, \$B x = b\$) and backward
+transformation (BTRAN, \$B^T y = c\$).
 """
 mutable struct Nla
     num_col::Int
@@ -117,7 +121,12 @@ function unapply_basis_matrix_row_scale!(nla::Nla, rhs::HVector)
     return rhs
 end
 
-"""`HSimplexNla::ftran` — FTRAN dans l'espace original (échelles appliquées)."""
+"""
+    ftran!(nla::Nla, rhs::HVector, expected_density::Float64)
+
+Perform forward transformation \$B x = b\$ with basis scaling transformations applied.
+Updates `rhs` in-place.
+"""
 function ftran!(nla::Nla, rhs::HVector, expected_density::Float64)
     apply_basis_matrix_row_scale!(nla, rhs)
     ftran_in_scaled_space!(nla, rhs, expected_density)
@@ -125,7 +134,12 @@ function ftran!(nla::Nla, rhs::HVector, expected_density::Float64)
     return rhs
 end
 
-"""`HSimplexNla::btran` — BTRAN dans l'espace original."""
+"""
+    btran!(nla::Nla, rhs::HVector, expected_density::Float64)
+
+Perform backward transformation \$B^T y = c\$ with basis scaling transformations applied.
+Updates `rhs` in-place.
+"""
 function btran!(nla::Nla, rhs::HVector, expected_density::Float64)
     apply_basis_matrix_col_scale!(nla, rhs)
     btran_in_scaled_space!(nla, rhs, expected_density)

@@ -43,10 +43,22 @@ end
     HFactor(num_col, num_row, num_basic, a_start, a_index, a_value, basic_index;
             pivot_threshold, pivot_tolerance, update_method)
 
-Factorisation de la matrice de base : `P B Q = L U` (cf. `HFactor` de HiGHS).
-`a_start/a_index/a_value` forment la matrice des contraintes en CSC 1-based ;
-`basic_index` porte les numéros de variable 1-based (colonnes `1:num_col`,
-logiques `num_col+1:num_col+num_row`).
+Sparse LU factorization and Forrest-Tomlin basis update engine, equivalent to HiGHS's `HFactor`.
+
+Computes and maintains the factorization:
+```math
+P B Q = L U
+```
+where \$B\$ is the basis matrix composed of columns indexed by `basic_index`, \$P\$ and \$Q\$
+are row and column permutation matrices, \$L\$ is unit lower triangular, and \$U\$ is upper
+triangular.
+
+# Key Optimizations
+- **Unit-diagonal pivot bypass**: Short-circuits floating-point divisions in `ftranU`,
+  `btranU`, and `solveHyper` when diagonal pivots in \$U\$ are \$\\pm 1.0\$.
+- **Hyper-sparse forward and backward transformation**: Graph reachability search using
+  `HVector` indices for sub-linear FTRAN / BTRAN runtime.
+- **Forrest-Tomlin updates**: In-place update of factorization across basis changes.
 """
 mutable struct HFactor
     num_row::Int
@@ -204,12 +216,13 @@ include("hfactor_solve.jl")
 include("hfactor_refactor.jl")
 
 """
-    build!(f)
+    build!(f::HFactor) -> Int
 
-Forme `P B Q = L U`. Rend `0` si le facteur est complet, sinon la carence de
-rang résiduelle. Si `refactor_info.use` est armé, passe par `rebuild!` ; une
-base déficiente est complétée par des logiques (`buildHandleRankDeficiency!` +
-`buildMarkSingC!`) comme dans la source.
+Compute the sparse LU factorization \$P B Q = L U\$ for the current basis matrix.
+
+Returns `0` if the basis is non-singular and the factorization completed successfully,
+or the rank deficiency count if the basis is rank-deficient (in which case singular columns
+are replaced by logical slacks).
 """
 function build!(f::HFactor)
     # Refactorisation depuis la liste de pivots du dernier build réussi.

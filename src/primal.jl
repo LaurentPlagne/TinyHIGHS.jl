@@ -26,10 +26,15 @@
 # ou le nettoyage de `HEkkDual::solve`), et `INVERT` fait.
 
 """
-    PrimalSolver(engine)
+    PrimalSolver(engine::SimplexEngine)
 
-Miroir de `HEkkPrimal` : tampons `row_ep`/`row_ap`/`col_aq`, poids de colonnes
-(Dantzig pour M4a) et état de l'itération courante.
+Primal revised simplex algorithm solver, equivalent to HiGHS's `HEkkPrimal`.
+
+Implements:
+- Primal Phase 1 and Phase 2.
+- Column selection (`chooseColumn`) with Dantzig, Devex, and Steepest Edge pricing.
+- Row selection (`chooseRow`) and Harris two-pass ratio tests.
+- Bound swaps and feasibility restoration.
 """
 mutable struct PrimalSolver
     engine::SimplexEngine

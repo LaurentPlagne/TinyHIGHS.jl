@@ -16,10 +16,15 @@
 # dégrader silencieusement.
 
 """
-    DualSolver(engine)
+    DualSolver(engine::SimplexEngine)
 
-Miroir de `HEkkDual` : tampons `row_ep`/`row_ap`/`col_aq`/`col_BFRT`, état de
-l'itération courante et politique de prix.
+Dual revised simplex algorithm solver, equivalent to HiGHS's `HEkkDual`.
+
+Implements:
+- Dual Phase 1 (achieving dual feasibility) and Dual Phase 2 (optimality).
+- Dual Steepest Edge (DSE) and Devex pricing strategies.
+- Bound Flipping Ratio Test (BFRT) for multi-step progress in single iterations.
+- Taboo list and cycling mitigation.
 """
 mutable struct DualSolver
     engine::SimplexEngine
