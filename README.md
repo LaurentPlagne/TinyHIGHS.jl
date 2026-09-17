@@ -1,6 +1,6 @@
 # TinyHiGHS.jl
 
-[![CI](https://github.com/laurentplagne/TinyHiGHS.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/laurentplagne/TinyHiGHS.jl/actions/workflows/CI.yml)
+[![CI](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/CI.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **TinyHiGHS.jl** is a lightweight, zero-allocation, pure-Julia experimental port of the **dual and primal revised simplex engines** from [HiGHS](https://highs.dev/) (the premier open-source LP/MIP solver developed at the University of Edinburgh).
@@ -34,7 +34,7 @@ TinyHiGHS is **not** a general-purpose replacement for HiGHS. Its scope is delib
 Everything is self-contained. Clone and run:
 
 ```bash
-git clone https://github.com/laurentplagne/TinyHiGHS.jl.git
+git clone https://github.com/LaurentPlagne/TinyHIGHS.jl.git
 cd TinyHiGHS.jl
 ```
 

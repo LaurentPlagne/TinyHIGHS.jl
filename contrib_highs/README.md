@@ -1,6 +1,6 @@
 # Upstream Contribution Proposal for HiGHS C++
 
-This document summarizes performance optimizations identified, validated, and benchmarked during the development of **[TinyHiGHS.jl](https://github.com/laurentplagne/TinyHiGHS.jl)** (a faithful, zero-allocation pure Julia port of HiGHS's dual and primal revised simplex solvers).
+This document summarizes performance optimizations identified, validated, and benchmarked during the development of **[TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)** (a faithful, zero-allocation pure Julia port of HiGHS's dual and primal revised simplex solvers).
 
 All optimizations preserve **strict bit-for-bit IEEE-754 equivalence** against frozen HiGHS reference oracles.
 
@@ -84,4 +84,4 @@ La PR est prête sur la branche `perf/unit-diagonal-pivots` du dépôt local de 
 Lors des benchmarks sur les séquences d'optimisation stochastique, **TinyHiGHS.jl atteint 32.4 µs par solve** (soit encore 1.6x plus rapide que HiGHS C++ patché à 54 µs) :
 - **Cause de l'écart** : Dans HiGHS C++, l'appel à `highs.run()` et aux fonctions de modification de bornes réalloue ou redimensionne dynamiquement de multiples conteneurs `std::vector` à travers la hiérarchie `Highs` -> `HEkk` -> `HFactor`.
 - **Piste proposée pour HiGHS 2.x** : Introduire un mode d'exécution à « tampons persistants » où l'espace de travail est alloué une seule fois à capacité maximale et réutilisé sans aucune allocation tas entre résolutions successives en warm-start.
-- **Référence publique** : L'implémentation complète et documentée de ce mécanisme à zéro allocation est consultable publiquement dans le dépôt open-source [TinyHiGHS.jl](https://github.com/laurentplagne/TinyHiGHS.jl).
+- **Référence publique** : L'implémentation complète et documentée de ce mécanisme à zéro allocation est consultable publiquement dans le dépôt open-source [TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl).
