@@ -1,0 +1,25 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+docs/build/
+Manifest.toml
+
+# macOS
+.DS_Store
+
+# Binaires et builds C++ (oracle)
+oracle/build/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Fichiers temporaires
+*.tmp
+*.log
+scratch/
+checks.json
+contrib_highs/cpp/replay_sequence
+contrib_highs/cpp/replay_sequence_original
