@@ -110,8 +110,10 @@ end
         end
         @test v.array == expected
         @test sort(v.index[1:v.count]) == sort(indices)
-        collect_aj!(m, v, 6 + 2, 0.5)
-        @test v.array[2] == 0.5
+        v_logique = HVector(8)
+        v_logique.count = 0
+        collect_aj!(m, v_logique, 6 + 2, 0.5)
+        @test v_logique.array[2] == 0.5
     end
 
     @testset "priceByColumn" begin
