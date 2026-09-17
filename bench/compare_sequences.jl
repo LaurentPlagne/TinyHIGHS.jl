@@ -7,6 +7,29 @@ using TinyHiGHS
 
 const SEQ_ROOT = abspath(joinpath(@__DIR__, "..", "instances", "sequences"))
 const SEQ_ORACLE_BIN = abspath(joinpath(@__DIR__, "..", "oracle", "build", "sequence_oracle"))
+const REPLAY_CPP_BIN = abspath(joinpath(@__DIR__, "..", "contrib_highs", "cpp", "replay_sequence"))
+const RUN_BENCH_SCRIPT = abspath(joinpath(@__DIR__, "..", "contrib_highs", "run_bench_cpp.sh"))
+
+function find_sequence_runner()
+    if haskey(ENV, "HIGHS_SEQUENCE_BIN") && isfile(ENV["HIGHS_SEQUENCE_BIN"])
+        return ENV["HIGHS_SEQUENCE_BIN"]
+    end
+    if isfile(REPLAY_CPP_BIN)
+        return REPLAY_CPP_BIN
+    end
+    if isfile(SEQ_ORACLE_BIN)
+        return SEQ_ORACLE_BIN
+    end
+    # Tenter la compilation de replay_sequence via run_bench_cpp.sh si possible
+    if isfile(RUN_BENCH_SCRIPT)
+        try
+            run(pipeline(`$RUN_BENCH_SCRIPT`, devnull))
+            isfile(REPLAY_CPP_BIN) && return REPLAY_CPP_BIN
+        catch
+        end
+    end
+    return nothing
+end
 
 """
 Rejoue une séquence avec TinyHiGHS en pur warm-start (moteur unique réutilisé).
@@ -85,57 +108,81 @@ function replay_sequence_tinyhighs(base_lp_path::String, ops_path::String)
 end
 
 """
-Rejoue une séquence avec HiGHS C++ (via sequence_oracle) en pur warm-start.
+Rejoue une séquence avec HiGHS C++ (via replay_sequence ou sequence_oracle) en pur warm-start.
 """
 function replay_sequence_highs_c(base_lp_path::String, ops_path::String)
-    isfile(SEQ_ORACLE_BIN) || error("sequence_oracle binaire non trouvé à $SEQ_ORACLE_BIN")
-    lp = read_lp(base_lp_path)
-    m = lp.a_matrix
-    
-    # Préparation du flux d'entrée pour sequence_oracle (format M3/M5)
-    input = IOBuffer()
-    println(input, lp.num_col, " ", lp.num_row, " ", length(m.index))
-    println(input, join(lp.col_cost, " "))
-    println(input, join(lp.col_lower, " "))
-    println(input, join(lp.col_upper, " "))
-    println(input, join(lp.row_lower, " "))
-    println(input, join(lp.row_upper, " "))
-    println(input, join(m.start .- 1, " "))
-    println(input, join(m.index .- 1, " "))
-    println(input, join(m.value, " "))
-    println(input, Int(lp.sense), " 0.0")
-    
-    for l in eachline(ops_path)
-        println(input, l)
-    end
-    
-    in_str = String(take!(input))
-    out = IOBuffer()
-    
-    t0 = time_ns()
-    proc = run(pipeline(`$SEQ_ORACLE_BIN 0 -1 0.0 0 -1.0 -1 -1.0 -1 0`; stdin=IOBuffer(in_str), stdout=out))
-    elapsed_ms = (time_ns() - t0) / 1e6
-    
-    total_iters = 0
-    solves_count = 0
-    last_obj = 0.0
-    for l in eachline(IOBuffer(String(take!(out))))
-        toks = split(l)
-        isempty(toks) && continue
-        if toks[1] == "solve"
-            solves_count += 1
-            last_obj = parse(Float64, toks[4])
-            total_iters += parse(Int, toks[5])
+    runner = find_sequence_runner()
+    runner !== nothing || error("Aucun exécuteur de séquence C++ trouvé. Définissez HIGHS_SEQUENCE_BIN ou compilez via contrib_highs/run_bench_cpp.sh")
+
+    if endswith(runner, "replay_sequence") || occursin("replay_sequence", runner)
+        out = IOBuffer()
+        run(pipeline(`$runner $base_lp_path $ops_path 1`; stdout=out))
+        solves_count = 0
+        total_iters = 0
+        last_obj = 0.0
+        elapsed_ms = 0.0
+        for l in eachline(IOBuffer(String(take!(out))))
+            if occursin("Total Solves", l)
+                solves_count = parse(Int, strip(split(l, ":")[2]))
+            elseif occursin("Total Iterations", l)
+                total_iters = parse(Int, strip(split(l, ":")[2]))
+            elseif occursin("Final Objective", l)
+                last_obj = parse(Float64, strip(split(l, ":")[2]))
+            elseif occursin("Best Elapsed Time", l)
+                elapsed_ms = parse(Float64, strip(replace(split(l, ":")[2], "ms" => "")))
+            end
         end
+        return (time_ms=elapsed_ms, solves=solves_count, iters=total_iters, last_obj=last_obj)
+    else
+        lp = read_lp(base_lp_path)
+        m = lp.a_matrix
+        
+        # Préparation du flux d'entrée pour sequence_oracle (format M3/M5)
+        input = IOBuffer()
+        println(input, lp.num_col, " ", lp.num_row, " ", length(m.index))
+        println(input, join(lp.col_cost, " "))
+        println(input, join(lp.col_lower, " "))
+        println(input, join(lp.col_upper, " "))
+        println(input, join(lp.row_lower, " "))
+        println(input, join(lp.row_upper, " "))
+        println(input, join(m.start .- 1, " "))
+        println(input, join(m.index .- 1, " "))
+        println(input, join(m.value, " "))
+        println(input, Int(lp.sense), " 0.0")
+        
+        for l in eachline(ops_path)
+            println(input, l)
+        end
+        
+        in_str = String(take!(input))
+        out = IOBuffer()
+        
+        t0 = time_ns()
+        proc = run(pipeline(`$runner 0 -1 0.0 0 -1.0 -1 -1.0 -1 0`; stdin=IOBuffer(in_str), stdout=out))
+        elapsed_ms = (time_ns() - t0) / 1e6
+        
+        total_iters = 0
+        solves_count = 0
+        last_obj = 0.0
+        for l in eachline(IOBuffer(String(take!(out))))
+            toks = split(l)
+            isempty(toks) && continue
+            if toks[1] == "solve"
+                solves_count += 1
+                last_obj = parse(Float64, toks[4])
+                total_iters += parse(Int, toks[5])
+            end
+        end
+        return (time_ms=elapsed_ms, solves=solves_count, iters=total_iters, last_obj=last_obj)
     end
-    return (time_ms=elapsed_ms, solves=solves_count, iters=total_iters, last_obj=last_obj)
 end
 
 function run_all_sequence_benchmarks()
     println("="^95)
     println(" BENCHMARK COMPARATIF DES SUITES DE LP (WARM-START) : TinyHiGHS.jl vs HiGHS C++")
     println("="^95)
-    println("Oracle C++ HiGHS : ", isfile(SEQ_ORACLE_BIN) ? SEQ_ORACLE_BIN : "Non compilé")
+    runner = find_sequence_runner()
+    println("Exécuteur C++ HiGHS : ", runner !== nothing ? runner : "Aucun (définissez HIGHS_SEQUENCE_BIN ou HIGHS_DIR)")
     println()
     
     sequences = ["sequence_small", "sequence_medium"]

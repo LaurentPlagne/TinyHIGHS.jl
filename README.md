@@ -65,6 +65,26 @@ You can also replay the sequences directly in 100% native C++ using official HiG
 ./contrib_highs/run_bench_cpp.sh
 ```
 
+### 4. Configuring HiGHS C++ Location (Custom Build vs Julia Artifact)
+
+By default, TinyHiGHS benchmarks automatically detect and use the official HiGHS binary/library shipped via Julia's artifact system (`~/.julia/artifacts/...`) or in your system `PATH` — **zero manual configuration or C++ compilation required**.
+
+However, if you wish to benchmark against a **custom C++ build** (such as your local clone with the `HFactor` optimization patch applied):
+
+```bash
+# Point to a custom CMake build directory (containing bin/highs and lib/libhighs):
+export HIGHS_DIR=/path/to/HiGHS/build
+
+# Or point to a custom installation prefix:
+export HIGHS_INSTALL=/path/to/HiGHS/install
+
+# Or directly specify the highs executable:
+export HIGHS_BIN=/path/to/HiGHS/build/bin/highs
+
+# Then run the benchmark as usual:
+julia --project=. bench/compare_highs.jl
+```
+
 ---
 
 ## 🔬 Key Architectural Findings & Upstream HiGHS Contributions

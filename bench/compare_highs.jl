@@ -7,8 +7,22 @@ using TinyHiGHS
 
 const INSTANCES_DIR = abspath(joinpath(@__DIR__, "..", "instances"))
 
-# Recherche du binaire highs officiel
+# Recherche du binaire highs (priorité aux variables d'environnement, puis PATH, puis artefacts)
 function find_highs_binary()
+    # 1. Variable d'environnement explicite HIGHS_BIN
+    if haskey(ENV, "HIGHS_BIN") && isfile(ENV["HIGHS_BIN"])
+        return ENV["HIGHS_BIN"]
+    end
+    # 2. Variable d'environnement HIGHS_DIR ou HIGHS_INSTALL
+    for env_var in ["HIGHS_DIR", "HIGHS_INSTALL"]
+        if haskey(ENV, env_var) && isdir(ENV[env_var])
+            for sub in ["bin/highs", "highs"]
+                cand = joinpath(ENV[env_var], sub)
+                isfile(cand) && (filemode(cand) & 0o111 != 0) && return cand
+            end
+        end
+    end
+    # 3. Chemins standards et PATH système
     for bin in ["highs", "/opt/homebrew/bin/highs", "/usr/local/bin/highs"]
         try
             p = run(pipeline(`which $bin`, devnull); wait=true)

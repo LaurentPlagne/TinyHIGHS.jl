@@ -9,13 +9,13 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CPP_DIR="$SCRIPT_DIR/cpp"
 CXX="${CXX:-clang++}"
 
-# Détection de l'installation HiGHS C++ locale (patchée)
-HIGHS_INSTALL="${HIGHS_INSTALL:-$(cd "$SCRIPT_DIR/../../HiGHS/install" 2>/dev/null && pwd || cd "$SCRIPT_DIR/../.."/*/third_party/solvers/install/highs 2>/dev/null && pwd || true)}"
-ORIGINAL_HIGHS_LIB="${ORIGINAL_HIGHS_LIB:-$HOME/.julia/artifacts/5a3d28a9c8ef24dab596551d0b991b2f9d029ee7/lib}"
+# Détection de l'installation HiGHS C++ locale (patchée ou custom)
+HIGHS_INSTALL="${HIGHS_INSTALL:-${HIGHS_DIR:-$(cd "$SCRIPT_DIR/../../HiGHS/install" 2>/dev/null && pwd || cd "$SCRIPT_DIR/../.."/*/third_party/solvers/install/highs 2>/dev/null && pwd || true)}}"
+ORIGINAL_HIGHS_LIB="${ORIGINAL_HIGHS_LIB:-$(find "$HOME/.julia/artifacts" -maxdepth 3 \( -name "libhighs.1.15*dylib" -o -name "libhighs.1.15*so" \) 2>/dev/null | head -n 1 | xargs dirname 2>/dev/null || find "$HOME/.julia/artifacts" -maxdepth 3 -name "libhighs.*" 2>/dev/null | head -n 1 | xargs dirname 2>/dev/null || true)}"
 
 if [ -z "$HIGHS_INSTALL" ] || [ ! -d "$HIGHS_INSTALL" ]; then
     echo "Erreur: Répertoire d'installation de HiGHS non trouvé."
-    echo "Définissez HIGHS_INSTALL=/chemin/vers/install/highs"
+    echo "Définissez HIGHS_INSTALL=/chemin/vers/install/highs ou HIGHS_DIR=/chemin/vers/build/highs"
     exit 1
 fi
 
@@ -45,11 +45,11 @@ if [ -d "$ORIGINAL_HIGHS_LIB" ] && [ -f "$ORIGINAL_HIGHS_LIB/libhighs.dylib" -o 
         -L "$ORIGINAL_HIGHS_LIB" \
         -lhighs -Wl,-rpath,"$ORIGINAL_HIGHS_LIB" \
         "$CPP_DIR/replay_sequence.cpp" \
-        -o "$BIN_ORIGINAL"
-        echo "Compilation terminée : $BIN_ORIGINAL"
-        echo
+        -o "$BIN_ORIGINAL" 2>/dev/null || true
     fi
-    HAS_ORIGINAL=true
+    if [ -f "$BIN_ORIGINAL" ] && "$BIN_ORIGINAL" 2>&1 | grep -q "Usage"; then
+        HAS_ORIGINAL=true
+    fi
 fi
 
 echo "================================================================================"
