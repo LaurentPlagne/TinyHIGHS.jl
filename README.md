@@ -181,8 +181,20 @@ to be reproducible public assets.
 
 ## 👥 Authors & Acknowledgments
 
-- **Port & Architecture**: Laurent Plagne & contributors.
-- **Original HiGHS Solvers & Theory**: Julian Hall, Ivet Galabova, Leona Gottwald, and the HiGHS team ([ERGO-Code](https://github.com/ERGO-Code/HiGHS), School of Mathematics, University of Edinburgh).
+TinyHiGHS.jl is a pure-Julia port and experimental re-architecture of the
+revised simplex components of HiGHS.
+
+- **Original HiGHS algorithms, solvers, numerical methods, and theory**:
+  Julian Hall, Ivet Galabova, Leona Gottwald, and the HiGHS team
+  ([ERGO-Code/HiGHS](https://github.com/ERGO-Code/HiGHS)), School of Mathematics,
+  University of Edinburgh.
+- **TinyHiGHS.jl port, architecture, benchmarks, and validation**:
+  Laurent Plagne.
+
+### Development assistance
+
+The initial C++-to-Julia translation relied extensively on multiple large
+language model (LLM) systems as coding, translation, and code-analysis tools.
 
 ## 📄 License
 
