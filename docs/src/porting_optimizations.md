@@ -76,40 +76,28 @@ graph TD
 
 ---
 
-### B. Micro-Architectural Optimization: Short-Circuit Unit Diagonal Pivots
+### B. Micro-Architectural Optimization: SIMD Reciprocal and Branchless Substitution
 
-During deep profiling of `HFactor` solves on network flow and LP problems, an essential micro-architectural pattern emerged:
+The current HiGHS experiment does not branch on unit pivots. Instead, every
+diagonal pivot is handled by the same reciprocal path:
 
-#### Empirical Finding
-In network flow, unit-coefficient, and multi-commodity LPs:
-- **82.8%** of diagonal pivots in $U$ are exactly `+1.0`.
-- **7.3%** of diagonal pivots in $U$ are exactly `-1.0`.
-- **Over 90.1% of all floating-point divisions during FTRAN and BTRAN are divisions by $\pm 1.0$!**
+1. `HFactor` computes `1.0 / pivot` once during factorization in a contiguous,
+   compiler-vectorized pass.
+2. Forrest–Tomlin updates append the reciprocal for each new diagonal pivot.
+3. `ftranU`, `btranU`, and `solveHyper` multiply by the stored reciprocal,
+   replacing the per-pivot `FDIV` in the triangular solves.
 
-```
-Diagonal Pivot Distribution in U Matrix:
-[+1.0] ████████████████████████████████████████ 82.8%
-[-1.0] ███ 7.3%
-[Other] ████ 9.9%
-```
+This keeps the hot loop branchless and makes the optimization useful for mixed
+matrices, not only network matrices dominated by `±1` coefficients. The
+reciprocal path is bit-for-bit exact for `±1` and powers of two; for arbitrary
+non-zero pivots the tested difference is bounded by one ULP. TinyHiGHS therefore
+retains `kPivotBranching` as the strict frozen-oracle path and exposes
+`kPivotBranchless` for the reciprocal experiment.
 
-#### Micro-architectural Impact
-- On modern x86-64 and AArch64 CPUs, floating-point division (`FDIV` / `vdivsd`) has a latency of **10 to 15 clock cycles** and cannot pipeline like addition or multiplication.
-- By short-circuiting `pivot == 1.0` and `pivot == -1.0`:
-  ```julia
-  if pivot == 1.0
-      # 0-cycle pass-through (identity)
-  elseif pivot == -1.0
-      val = -val # 1-cycle sign flip
-  else
-      val /= pivot # 15-cycle division (only 10% of cases)
-  end
-  ```
-- With a ~90% branch prediction hit rate, the CPU branch predictor eliminates the division stall.
-- Because $x / 1.0 \equiv x$ and $x / (-1.0) \equiv -x$ in IEEE-754 floating-point arithmetic (for all finite and non-NaN floats), this optimization is **strictly bit-for-bit identical to division**.
-
-#### Upstream Contribution
-This optimization proved so effective (providing up to **4.14x speedup** on warm-start sequences) that it was contributed back to the upstream C++ project via an official Pull Request to **`ERGO-Code/HiGHS`** targeting the `latest` branch, accompanied by Catch2 regression tests.
+The implementation is available in the HiGHS branch
+`perf/simd-branchless-pivots`, with the warm-start regression test and replay
+instructions documented in the repository's
+[`contrib_highs/README.md`](https://github.com/LaurentPlagne/TinyHIGHS.jl/blob/main/contrib_highs/README.md).
 
 ---
 
@@ -138,8 +126,8 @@ The original C++ port was coupled to internal data loaders. TinyHiGHS features a
 | :--- | :--- | :--- |
 | **Language & Dependencies** | C++ dependent (requires compiler & oracle) | **100% Pure Julia, zero dependencies** |
 | **Warm-Start Resolves** | Reallocated temporary arrays | **Strictly 0 bytes allocated** |
-| **FTRAN / BTRAN Pivots** | Unconditional `val /= pivot` (15 cycles) | **Short-circuit $\pm 1.0$ (0-1 cycles)** |
+| **FTRAN / BTRAN Pivots** | Unconditional `val /= pivot` (per-pivot `FDIV`) | **Precomputed reciprocal `val *= pivot_inverse` (branchless)** |
 | **LP File I/O** | External / C++ test harnesses | **Native `read_lp` / `write_lp` in Julia stdlib** |
 | **Type Inférence** | Partial `Union` returns | **100% `@inferred` type stable** |
 | **Solve Time (`sequence_small`)** | ~223 µs / solve | **32.4 µs / solve (6.9x faster)** |
-| **Numerical Consistency** | Exact IEEE-754 match | **Exact reference path; branchless path <=1 ULP on arbitrary pivots** |
+| **Numerical Consistency** | Exact IEEE-754 match | **Exact for $\pm1$ / powers of two; branchless path <=1 ULP on arbitrary pivots** |

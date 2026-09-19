@@ -10,10 +10,10 @@
 
 // ==============================================================================
 // Catch2 Test Case for HiGHS check/ suite:
-// Warm-start sequence validation with short-circuited unit diagonal pivots
+// Warm-start sequence validation with branchless reciprocal diagonal pivots
 // ==============================================================================
 
-TEST_CASE("Factor-unit-diagonal-warm-start-sequence", "[highs_factor]") {
+TEST_CASE("Factor-branchless-warm-start-sequence", "[highs_factor]") {
   const std::string base_lp_path =
       std::string(HIGHS_DIR) + "/check/instances/sequence_small_base.lp";
   const std::string ops_path =

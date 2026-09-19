@@ -24,7 +24,9 @@ julia --project=. bench/compare_sequences.jl
 ```
 
 ### 3. Standalone Native C++ Replay (Zero Julia)
-Compares the C++ implementation of official HiGHS against the patched HiGHS C++ kernel (with the unit pivot short-circuit) using a pure C++ runner:
+Compares the official HiGHS artifact against the local `HiGHS_branchless` C++
+kernel (SIMD reciprocal pre-inversion and branchless substitution) using a pure
+C++ runner:
 
 ```bash
 ./contrib_highs/run_bench_cpp.sh
@@ -65,7 +67,7 @@ All benchmarks were recorded on Apple Silicon (M-series, AArch64) using Clang wi
 
 A sequence of consecutive solves where bounds on variables are dynamically updated between resolves, simulating decomposition subproblem evaluations:
 
-| Sequence | Solves | HiGHS C++ (1.15.1) | HiGHS C++ Patched | TinyHiGHS.jl | TinyHiGHS Speedup | Allocations |
+| Sequence | Solves | HiGHS artifact (1.15.1) | HiGHS_branchless | TinyHiGHS.jl | TinyHiGHS Speedup | Allocations |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | `sequence_small` | 76 | 16.97 ms (223 µs/solve) | 4.10 ms (54 µs/solve) | **2.46 ms (32.4 µs/solve)** | **6.9x faster** | **0 bytes** |
 | `sequence_medium` | 100 | 182.50 ms (1.82 ms/solve) | 148.27 ms (1.48 ms/solve) | **141.30 ms (1.41 ms/solve)** | **1.3x faster** | **0 bytes** |

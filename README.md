@@ -123,13 +123,24 @@ julia --project=. bench/compare_highs.jl
 
 The development and profiling of TinyHiGHS revealed two major micro-architectural insights:
 
-### 1. Short-Circuiting Unit Diagonal Pivots in `HFactor`
-In network-flow, multi-commodity, and scheduling problems, incidence matrices are dominated by $\{0, \pm 1\}$ coefficients.
-* **Empirical observation**: In real network sequences, **over 90% of all diagonal pivots in $U$ are exactly $\pm 1.0$**.
-* **Micro-architectural gain**: Floating-point division (`vdivsd` / `FDIV`) has a latency of 10–15 CPU cycles. Checking for `pivot == 1.0` and `pivot == -1.0` bypasses division with a 0-cycle pass-through or a 1-cycle negation. Because IEEE-754 division by $\pm 1.0$ is exact for finite numbers, this optimization is **numerically bit-for-bit identical**.
-* **Upstream impact on HiGHS C++**: Applied directly to `HFactor.cpp` in HiGHS 1.15.1, this yields a **+21% to +36% speedup** on cold-start CLI solves and up to **4.14x speedup** on warm-start sequences in native C++!
-* **Optional branchless strategy**: `kPivotBranchless` multiplies by precomputed reciprocals to remove the branch. It is exact for unit pivots; arbitrary pivots can differ from scalar division by one ULP. The default `kPivotBranching` strategy remains the bit-for-bit oracle path.
-* **Upstream PR**: A clean Pull Request with Catch2 unit tests has been prepared for `ERGO-Code/HiGHS`. See [`contrib_highs/README.md`](contrib_highs/README.md) for technical details and instructions.
+### 1. SIMD Reciprocal and Branchless Diagonal Substitution in `HFactor`
+The current upstream experiment replaces the per-pivot floating-point division in
+`ftranU`, `btranU`, and `solveHyper` with a multiplication by a precomputed
+reciprocal.
+* **Pre-inversion**: diagonal pivots are inverted once during factorization (and
+  when Forrest–Tomlin updates append a pivot) in a contiguous, compiler-vectorized
+  pass.
+* **Branchless substitution**: the solve kernels use
+  `pivot_multiplier *= u_pivot_inv_value[i]` for every pivot, avoiding the
+  unpredictable `FDIV`/branch trade-off on mixed matrices.
+* **Numerical contract**: there is no unit-pivot special case in the hot loop.
+  Multiplication by the reciprocal is bit-for-bit exact for `±1` and powers of
+  two; arbitrary pivots are bounded by one ULP in the tested corpus. TinyHiGHS
+  keeps `kPivotBranching` as the strict reference path and exposes
+  `kPivotBranchless` for the reciprocal experiment.
+* **Upstream PR**: the corresponding HiGHS branch is
+  `perf/simd-branchless-pivots`. See [`contrib_highs/README.md`](contrib_highs/README.md)
+  for implementation and reproduction details.
 
 ### 2. Persistent Buffer Architecture (Zero Heap Allocations)
 In standard HiGHS C++, calling `highs.run()` or modifying problem bounds triggers multiple buffer resizes, memory reallocations, and state copies across the `Highs` -> `HEkk` -> `HFactor` hierarchy.

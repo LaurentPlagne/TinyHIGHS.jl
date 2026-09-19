@@ -32,8 +32,10 @@ graph TD
 ## Key Highlights
 
 - 🚀 **Zero Allocations in Warm-Start Resolves**: Once initialized, repeated resolves with modified bounds or objective costs require **0 bytes allocated** and execute in **30 to 50 microseconds** per solve.
-- ⚡ **Unit-Diagonal Pivot Optimization**: Leverages micro-architectural bypass for $\pm 1.0$ pivots in LU factorization (`HFactor`), eliminating over 90% of costly hardware floating-point division instructions (`FDIV`).
-- 💎 **Reference Numerical Accuracy**: The default `kPivotBranching` strategy is checked for strict IEEE-754 equivalence against frozen HiGHS reference oracles. The optional branchless reciprocal strategy is tested with an explicit one-ULP bound for non-unit pivots.
+- ⚡ **Branchless Reciprocal Substitution**: Pre-inverts the diagonal pivots in
+  `HFactor` with a compiler-vectorized pass and replaces per-pivot `FDIV` with a
+  multiplication in FTRAN/BTRAN and `solveHyper`.
+- 💎 **Reference Numerical Accuracy**: The default `kPivotBranching` strategy is checked for strict IEEE-754 equivalence against frozen HiGHS reference oracles. The optional branchless reciprocal strategy is tested with an explicit one-ULP bound for arbitrary pivots.
 - 📦 **100% Pure Julia & Zero Dependencies**: Runs out-of-the-box on macOS (Apple Silicon & Intel), Linux (x86-64 & AArch64), and Windows without requiring any external C/C++ shared library, CMake, or compiler toolchain.
 - 📝 **Native CPLEX `.lp` Reader & Writer**: Fast, dependency-free text I/O compatible with HiGHS, CPLEX, Gurobi, and Clp.
 
@@ -76,6 +78,6 @@ See the [Benchmarks](benchmarks.md) and [From C++ to Zero-Allocation Julia](port
 
 - [Quick Start Guide](quickstart.md): Installation, model formulation, solving, and inspecting solutions.
 - [System Architecture](architecture.md): Deep-dive into `SimplexEngine`, `HFactor`, `HVector`, and solver algorithms.
-- [From C++ to Zero-Allocation Julia](porting_optimizations.md): Evolution, architectural enhancements, unit pivot bypass, and memory layout.
+- [From C++ to Zero-Allocation Julia](porting_optimizations.md): Evolution, architectural enhancements, branchless substitution, and memory layout.
 - [Benchmark Suite](benchmarks.md): Methodology, reproducibility, and comparative analysis.
 - [API Reference](api.md): Complete reference for all exported types, functions, and control options.

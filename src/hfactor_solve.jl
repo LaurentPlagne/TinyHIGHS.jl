@@ -9,9 +9,9 @@ const ACTIVE_PIVOT_STRATEGY = Ref{PivotStrategy}(kPivotBranching)
     set_pivot_strategy!(s::PivotStrategy)
 
 Sets the global pivot inversion strategy in HFactor:
-- `kPivotBranching`: short-circuit with branches for unit pivots (±1.0)
+- `kPivotBranching`: branching reference path (bit-exact with HiGHS)
 - `kPivotBranchless`: branchless multiplication by a pre-computed reciprocal
-  (bit-exact for unit pivots; arbitrary pivots may differ by one ULP)
+  (bit-exact for `±1` and powers of two; arbitrary pivots may differ by one ULP)
 - `kPivotFdiv`: unconditional floating-point division (original HiGHS)
 """
 function set_pivot_strategy!(s::PivotStrategy)

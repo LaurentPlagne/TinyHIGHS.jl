@@ -130,7 +130,8 @@ HiGHS and TinyHiGHS rely on a hybrid sparse/dense vector structure:
 Maintains the factorization $P B Q = L U$:
 - **Initial Factorization (`build!`)**: Uses Markowitz threshold pivoting to minimize fill-in.
 - **Basis Updates (`update!`)**: Applies Forrest-Tomlin updates to maintain $L$ and $U$ without full refactorization.
-- **Unit Pivot Bypass**: Directly executes $x / (\pm 1.0)$ as identity or negation, avoiding hardware `FDIV` stalls.
+- **Branchless Reciprocal Substitution**: Reuses precomputed diagonal reciprocals
+  and multiplies during FTRAN/BTRAN, avoiding a per-pivot hardware `FDIV`.
 
 ### 4. `DualSolver` & `PrimalSolver`
 - **Dual Steepest Edge (DSE)**: Provides steep progress directions with adaptive switching to Devex if weight computation becomes expensive.

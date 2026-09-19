@@ -48,8 +48,8 @@ are row and column permutation matrices, \$L\$ is unit lower triangular, and \$U
 triangular.
 
 # Key Optimizations
-- **Unit-diagonal pivot bypass**: Short-circuits floating-point divisions in `ftranU`,
-  `btranU`, and `solveHyper` when diagonal pivots in \$U\$ are \$\\pm 1.0\$.
+- **Branchless reciprocal substitution**: Pre-inverts diagonal pivots and replaces
+  per-pivot divisions in `ftranU`, `btranU`, and `solveHyper` with multiplication.
 - **Hyper-sparse forward and backward transformation**: Graph reachability search using
   `HVector` indices for sub-linear FTRAN / BTRAN runtime.
 - **Forrest-Tomlin updates**: In-place update of factorization across basis changes.

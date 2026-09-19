@@ -179,7 +179,7 @@ run_sequence() {
         echo "[1/2] HiGHS Officiel v1.15.1 (sans patch) :"
         "$BIN_ORIGINAL" "$base_lp" "$ops" "$repeats"
         echo
-        echo "[2/2] $HIGHS_TARGET_LABEL (Short-circuit unit diagonal pivots) :"
+        echo "[2/2] $HIGHS_TARGET_LABEL (SIMD reciprocal / branchless pivots) :"
         "$BIN_PATCHED" "$base_lp" "$ops" "$repeats"
     else
         "$BIN_PATCHED" "$base_lp" "$ops" "$repeats"
