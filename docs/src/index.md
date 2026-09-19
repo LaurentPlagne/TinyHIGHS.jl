@@ -57,18 +57,22 @@ println("Objective: ", obj)
 
 # 3. High-performance warm-start: modify bounds and resolve with 0 allocations!
 change_col_bounds!(engine, 1, 0.0, 50.0)
-status_warm = solve!(engine) # Executed in ~35 µs with 0 bytes allocated!
+status_warm = solve!(engine) # 0 bytes allocated after warm-up; measure locally
 ```
 
 ---
 
 ## Performance Snapshot
 
-| Benchmark Instance | Number of Solves | HiGHS C++ (1.15.1) | TinyHiGHS.jl | Speedup | Allocations |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| `sequence_small` (warm-start) | 76 | 16.97 ms (223 µs/solve) | **2.46 ms (32.4 µs/solve)** | **6.9x faster** | **0 bytes** |
-| `sequence_medium` (warm-start) | 100 | 182.5 ms (1.82 ms/solve) | **141.3 ms (1.41 ms/solve)** | **1.3x faster** | **0 bytes** |
-| `netflow_small_01` (cold-start) | 1 | 5.69 ms | **3.51 ms** | **+38% faster** | — |
+| Benchmark Instance | Solves | HiGHS_artifact | HiGHS_branchless | TinyHiGHS branchless | Speedup vs artifact | Allocations |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `sequence_small` (warm-start) | 76 | 21.51 ms | 5.41 ms | **3.80 ms (50.0 µs/solve)** | **5.66x** | **0 bytes** |
+| `sequence_medium` (warm-start) | 100 | 269.25 ms | 222.33 ms | **160.71 ms (1.61 ms/solve)** | **1.68x** | **0 bytes** |
+
+This is a reproducible snapshot from `julia --project=. bench/bench_3way.jl`
+(warm-start) on Apple Silicon. The cold-start table is maintained on the
+[Benchmark Suite](benchmarks.md) page. Timings vary with hardware and system
+load; rerun the commands for fresh values.
 
 See the [Benchmarks](benchmarks.md) and [From C++ to Zero-Allocation Julia](porting_optimizations.md) sections for complete details and reproduction scripts.
 

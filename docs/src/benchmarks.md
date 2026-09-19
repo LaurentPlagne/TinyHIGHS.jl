@@ -6,7 +6,7 @@ This page documents the performance benchmarks, test instances, and instructions
 
 ## Benchmark Scripts
 
-TinyHiGHS includes four standalone benchmark harnesses plus a corpus-generation
+TinyHiGHS includes five standalone benchmark harnesses plus a corpus-generation
 utility:
 
 ### 1. Cold-Start Benchmarks (Julia vs. HiGHS CLI)
@@ -61,27 +61,31 @@ objective-only variables before variables appearing in constraints.
 
 ## Detailed Results
 
-All benchmarks were recorded on Apple Silicon (M-series, AArch64) using Clang with `-O3 -DNDEBUG` and Julia v1.12+.
+The snapshot below was recorded on Apple Silicon (M-series, AArch64) with Clang
+`-O3 -DNDEBUG` and Julia v1.12+. Absolute timings vary with hardware and system
+load; the commands above are the reproducibility contract.
 
 ### A. Warm-Start Sequences
 
 A sequence of consecutive solves where bounds on variables are dynamically updated between resolves, simulating decomposition subproblem evaluations:
 
-| Sequence | Solves | HiGHS artifact (1.15.1) | HiGHS_branchless | TinyHiGHS.jl | TinyHiGHS Speedup | Allocations |
+| Sequence | Solves | HiGHS artifact (1.15.1) | HiGHS_branchless | TinyHiGHS branching | TinyHiGHS branchless | TinyHiGHS FDIV |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `sequence_small` | 76 | 16.97 ms (223 µs/solve) | 4.10 ms (54 µs/solve) | **2.46 ms (32.4 µs/solve)** | **6.9x faster** | **0 bytes** |
-| `sequence_medium` | 100 | 182.50 ms (1.82 ms/solve) | 148.27 ms (1.48 ms/solve) | **141.30 ms (1.41 ms/solve)** | **1.3x faster** | **0 bytes** |
+| `sequence_small` | 76 | 21.51 ms (283.0 µs/solve) | 5.41 ms (71.2 µs/solve, 3.98x) | **4.06 ms (53.5 µs/solve, 5.29x)** | **3.80 ms (50.0 µs/solve, 5.66x)** | 3.92 ms (51.6 µs/solve, 5.49x) |
+| `sequence_medium` | 100 | 269.25 ms (2692.5 µs/solve) | 222.33 ms (2223.3 µs/solve, 1.21x) | **159.71 ms (1597.1 µs/solve, 1.69x)** | **160.71 ms (1607.1 µs/solve, 1.68x)** | 160.29 ms (1602.9 µs/solve, 1.68x) |
 
 ### B. Single Cold-Start Solves
 
 Solving network flow instances from scratch (including initial basis setup and full factorization):
 
-| Instance | Matrix Dimensions | HiGHS C++ CLI | TinyHiGHS.jl | Speedup | Iterations | Obj Gap |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `netflow_small_01.lp` | $56 \times 70$ | 5.69 ms | **3.51 ms** | **+38.3 %** | 49 vs 49 | **0.0 (exact)** |
-| `netflow_small_02.lp` | $56 \times 70$ | 5.69 ms | **3.56 ms** | **+37.4 %** | 46 vs 46 | **0.0 (exact)** |
-| `netflow_medium_02.lp` | $256 \times 320$ | 9.69 ms | **7.42 ms** | **+23.4 %** | 390 vs 390 | **0.0 (exact)** |
-| `netflow_large_01.lp` | $512 \times 640$ | 9.71 ms | **7.54 ms** | **+22.3 %** | 291 vs 291 | **0.0 (exact)** |
+| Instance | Matrix Dimensions | HiGHS C++ CLI | TinyHiGHS.jl | Speedup | Status / Obj Gap |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `netflow_small_01.lp` | $88 \times 107$ | 7.73 ms | **0.24 ms** | **32.11x** | `kOptimal`, exact |
+| `netflow_small_02.lp` | $88 \times 107$ | 6.76 ms | **0.28 ms** | **23.92x** | `kOptimal`, exact |
+| `netflow_medium_02.lp` | $431 \times 764$ | 11.37 ms | **3.23 ms** | **3.52x** | `kOptimal`, exact |
+
+The current comparison script also exercises infeasible and unbounded fixtures;
+those rows are deliberately not presented as speedups in this table.
 
 ---
 

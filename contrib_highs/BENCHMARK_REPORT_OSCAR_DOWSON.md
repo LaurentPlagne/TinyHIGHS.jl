@@ -13,49 +13,58 @@ In the context of dynamic programming and hydro-power scheduling at EDF (solving
 
 During this investigation, we observed **two unexpected and substantial performance gaps** across different compilation and architectural approaches:
 
-1. **The Yggdrasil JLL Gap ($\times 4.16$)**:  
-   The official `HiGHS_jll` binary distributed via BinaryBuilder/Yggdrasil takes **16.78 ms** (220.8 µs / solve) on our benchmark sequence `sequence_small` (76 resolves).  
-   Recompiling the identical HiGHS C++ source code locally with `clang++ -O3` drops the runtime to **4.03 ms** (53.0 µs / solve) — **a 4.16x speedup (+76% wall-clock reduction)** using the standard C++ API.
+1. **The artifact-to-native gap ($\times 3.98$ in this snapshot)**:
+   The official `HiGHS_artifact` binary distributed via Julia takes **21.51 ms** (283.0 µs / solve) on `sequence_small` (76 resolves).
+   The local `perf/simd-branchless-pivots` build takes **5.41 ms** (71.2 µs / solve), a **3.98x speedup** in this run using the same public C++ API.
 
-2. **The Dynamic Memory Allocation Gap ($\times 2.0$ additional)**:  
-   A faithful, pure Julia port of HiGHS's revised simplex solver ([TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)), architected with persistent pre-allocated workspaces and **zero heap allocations** (`@allocated == 0`), runs the exact same 76-solve sequence in **2.00 ms** (26.3 µs / solve) — **8.4x faster than `HiGHS_jll`** and **2.0x faster than local native C++**.
+2. **The persistent-workspace gap ($\times 1.42$ additional on `sequence_small`)**:
+   The pure Julia port ([TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)), architected with persistent pre-allocated workspaces and **zero heap allocations** (`@allocated == 0`), runs the same 76-solve sequence in **3.80 ms** (50.0 µs / solve) — **5.66x faster than `HiGHS_artifact`** and **1.42x faster than local `HiGHS_branchless`** in this snapshot.
 
-On a larger benchmark (`sequence_medium`, 100 resolves of dimension $1240 \times 1483$), TinyHiGHS achieves **62.6 ms** compared to **148.1 ms** for local C++ and **183.7 ms** for `HiGHS_jll` (**3x faster**).
+On `sequence_medium` (100 resolves of dimension $1240 \times 1483$), the same
+run measured **160.71 ms** for `TinyHiGHS_branchless`, **222.33 ms** for local
+`HiGHS_branchless`, and **269.25 ms** for `HiGHS_artifact` (1.68x and 1.38x
+relative speedups, respectively).
 
 ---
 
 ## 2. Experimental Benchmark Results
 
-Measurements performed on **Apple Silicon (macOS aarch64, M-series)**.  
-Reported values are the best (minimum) elapsed time over 5 consecutive runs. All variants solve with **strict bit-for-bit agreement on iteration counts and final objectives**.
+Measurements performed on **Apple Silicon (macOS aarch64, M-series)** with the
+checked-in `bench/bench_3way.jl` (five repetitions for `sequence_small`, three
+for `sequence_medium`). Reported values are the best elapsed time from those
+repetitions. The benchmark reports objective status explicitly; timings are
+machine-dependent snapshots.
 
-### A. Benchmark: `sequence_small` (76 consecutive warm-start resolves, base model $88 \times 107$, 47 total simplex iterations)
+### A. Benchmark: `sequence_small` (76 consecutive warm-start resolves, base model $88 \times 107$)
 
-| Engine & Build Configuration | Total Elapsed Time | Avg Time / Solve | Speedup vs JLL | Iterations | Final Objective |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **1. HiGHS C++ (`HiGHS_jll` v1.15.1, official artifact)** | **16.78 ms** | **220.8 µs** | 1.00x *(baseline)* | 47 | 298.2799 |
-| **2. HiGHS C++ (Native local build, `clang++ -O3`)** | **4.03 ms** | **53.0 µs** | **4.16x (+76%)** | 47 | 298.2799 |
-| **3. TinyHiGHS.jl (Pure Julia, `kPivotBranching`)** | **2.28 ms** | **30.0 µs** | **7.37x** | 47 | 296.6079 |
-| **4. TinyHiGHS.jl (Pure Julia, `kPivotFdiv` original)** | **2.09 ms** | **27.5 µs** | **8.03x** | 47 | 296.6079 |
-| **5. TinyHiGHS.jl (Pure Julia, `kPivotBranchless` SIMD)** | **2.00 ms** | **26.3 µs** | **8.40x** | 47 | 296.6079 |
+| Engine & Build Configuration | Total Elapsed Time | Avg Time / Solve | Speedup vs artifact | Final Objective / Status |
+| :--- | :---: | :---: | :---: | :---: |
+| **1. HiGHS_artifact (official v1.15)** | **21.51 ms** | **283.0 µs** | 1.00x *(baseline)* | 7.6042 / n/a |
+| **2. HiGHS_branchless (local PR, `-O3`)** | **5.41 ms** | **71.2 µs** | **3.98x** | 7.6042 / OK |
+| **3. TinyHiGHS.jl (`kPivotBranching`)** | **4.06 ms** | **53.5 µs** | **5.29x** | 7.6042 / OK |
+| **4. TinyHiGHS.jl (`kPivotFdiv`)** | **3.92 ms** | **51.6 µs** | **5.49x** | 7.6042 / OK |
+| **5. TinyHiGHS.jl (`kPivotBranchless`)** | **3.80 ms** | **50.0 µs** | **5.66x** | 7.6042 / OK |
 
 ---
 
-### B. Benchmark: `sequence_medium` (100 consecutive warm-start resolves, base model $1240 \times 1483$, 549 total simplex iterations)
+### B. Benchmark: `sequence_medium` (100 consecutive warm-start resolves, base model $1240 \times 1483$)
 
-| Engine & Build Configuration | Total Elapsed Time | Avg Time / Solve | Speedup vs JLL | Iterations | Final Objective |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **1. HiGHS C++ (`HiGHS_jll` v1.15.1, official artifact)** | **183.69 ms** | **1 836.9 µs** | 1.00x *(baseline)* | 549 | -199 314 325.2 |
-| **2. HiGHS C++ (Native local build, `clang++ -O3`)** | **148.07 ms** | **1 480.7 µs** | **1.24x (+19%)** | 549 | -199 314 325.2 |
-| **3. TinyHiGHS.jl (Pure Julia, `kPivotBranchless` SIMD)** | **62.64 ms** | **626.4 µs** | **2.93x** | 549 | -25 621 936.2* |
+| Engine & Build Configuration | Total Elapsed Time | Avg Time / Solve | Speedup vs artifact | Final Objective / Status |
+| :--- | :---: | :---: | :---: | :---: |
+| **1. HiGHS_artifact (official v1.15)** | **269.25 ms** | **2 692.5 µs** | 1.00x *(baseline)* | -3 717 944.5350 / n/a |
+| **2. HiGHS_branchless (local PR, `-O3`)** | **222.33 ms** | **2 223.3 µs** | **1.21x** | -3 717 944.5350 / OK |
+| **3. TinyHiGHS.jl (`kPivotBranching`)** | **159.71 ms** | **1 597.1 µs** | **1.69x** | -3 717 944.5347 / OK |
+| **4. TinyHiGHS.jl (`kPivotFdiv`)** | **160.29 ms** | **1 602.9 µs** | **1.68x** | -3 717 944.5347 / OK |
+| **5. TinyHiGHS.jl (`kPivotBranchless`)** | **160.71 ms** | **1 607.1 µs** | **1.68x** | -3 717 944.5347 / OK |
 
-*\*Note: Objectives match within tolerance; different simplex basis paths due to tie-breaking in dense pricing.*
+*Note: Objectives match within the benchmark tolerance; different simplex basis
+paths may occur because of tie-breaking in dense pricing.*
 
 ---
 
 ## 3. Technical Breakdown of the Two Gaps
 
-### Gap 1: Why does local `clang++ -O3` outperform `HiGHS_jll` by $4\times$?
+### Gap 1: Why does local `clang++ -O3` outperform `HiGHS_artifact` by about $4\times$?
 
 In `JuliaPackaging/Yggdrasil`, `HiGHS/build_tarballs.jl` compiles via `BinaryBuilder.jl` in an Alpine Linux cross-compilation environment with:
 ```cmake
@@ -67,18 +76,25 @@ cmake -S . -B build \
 
 1. **Generic Target Baseline**: To ensure binary compatibility across all systems, BinaryBuilder targets a generic baseline (`armv8.0-a` on AArch64, SSE2 on x86_64). It cannot use `-march=native` or `-mcpu=apple-m1`. On modern micro-architectures (wide-decode pipelines, aggressive out-of-order reordering, specialized vector units), this generic scheduling leaves significant IPC (instructions per cycle) on the table.
 2. **Dynamic Linking & Lack of LTO**: Cross-boundary calls into `libhighs.dylib` cannot be inlined or optimized across translation units without Link-Time Optimization (LTO).
-3. **Open Question for Yggdrasil**: Could `HiGHS_jll` benefit from targeted optimization flags, LTO (`-flto`), or architecture-specific sub-targets (similar to what is done for OpenBLAS)?
+3. **Open Question for Yggdrasil**: Could the official HiGHS artifact benefit from targeted optimization flags, LTO (`-flto`), or architecture-specific sub-targets (similar to what is done for OpenBLAS)?
 
 ---
 
-### Gap 2: Why does TinyHiGHS.jl outperform native C++ by $2\times$ (and JLL by $8\times$)?
+### Gap 2: Why does TinyHiGHS.jl outperform native C++ by about $1.4\times$ (and the artifact by up to $5.7\times$)?
 
-On warm-start sequences, each consecutive LP requires very few pivots (on `sequence_small`, only 47 iterations across 76 solves, averaging **0.6 iterations per solve**).
+On warm-start sequences, the checked-in runner reports the solve count,
+iteration count, final objective, and status for every replay. The timing table
+above intentionally reports only values produced by `bench/bench_3way.jl`.
 
-In this micro-solve regime (< 100 µs):
-1. **Heap Allocation Overhead in C++**: In HiGHS C++, invoking `highs.run()` and `highs.changeColBounds()` triggers numerous vector allocations, reallocations (`std::vector::resize`), and heap dynamic allocations across `Highs`, `HEkk`, and `HFactor`. In native code, `malloc`/`free` calls consume more than 60% of the wall-clock time on short resolves.
+In this micro-solve regime (about 50--70 µs per solve in the current
+`sequence_small` snapshot):
+1. **Persistent-workspace hypothesis**: TinyHiGHS keeps its simplex workspaces
+   allocated across resolves; the test suite checks zero allocations on active
+   kernels. The benchmark itself measures end-to-end time only, so it does not
+   claim a particular percentage of time spent in `malloc`/`free`.
 2. **Persistent In-Place Workspaces in Julia**: TinyHiGHS pre-allocates all internal simplex structures (`HVector`, `HFactor`, `DualRHS`, `DualRow`) up to capacity at initialization. Between consecutive solves, arrays are cleared or marked with pointer resets **with zero heap allocations** (`@allocated == 0`).
-3. **Full JIT Inlining**: Julia's native LLVM JIT specializes for the host CPU (`-mcpu=native`) and inlines the entire execution path from the model update down to hyper-sparse `solveHyper!`.
+3. **Full JIT Inlining**: Julia specializes the execution path from model update
+   down to hyper-sparse `solveHyper!` for the active host.
 
 ---
 
@@ -90,13 +106,13 @@ We have made the entire benchmarking suite completely standalone and automated.
 - A Mac (Apple Silicon or Intel) or Linux machine.
 - Julia $\ge 1.9$.
 - A standard C++11 compiler (`clang++` or `g++`).
-- A local build of HiGHS (optional: if omitted, the script automatically tests `HiGHS_jll` against `TinyHiGHS.jl`).
+- A local build of HiGHS (optional: if omitted, the script automatically tests the official artifact against `TinyHiGHS.jl`).
 
 ---
 
 ### Method A: Pure C++ Standalone Runner (Zero Julia Code Needed)
 
-A standalone Bash + C++11 runner is provided. It automatically locates your `HiGHS_jll` artifact in `~/.julia/artifacts`, compiles the C++ harness against both `libhighs` versions, and runs the side-by-side benchmark:
+A standalone Bash + C++11 runner is provided. It automatically locates the official artifact in `~/.julia/artifacts`, compiles the C++ harness against both `libhighs` versions, and runs the side-by-side benchmark:
 
 ```bash
 # 1. Clone the repository
@@ -112,7 +128,7 @@ cd TinyHIGHS.jl
 
 **What this script does:**
 1. Compiles `contrib_highs/cpp/replay_sequence.cpp` using official C++ API calls (`Highs::readModel`, `Highs::changeColBounds`, `Highs::run`).
-2. Links `replay_sequence_original` against the official `HiGHS_jll` artifact and its matching public headers.
+2. Links `replay_sequence_original` against the official HiGHS artifact and its matching public headers.
 3. Links `replay_sequence` against the selected local/native HiGHS build.
 4. Replays `sequence_small` and `sequence_medium` and prints timing, iterations, and objective validation.
 
@@ -151,8 +167,8 @@ All benchmark assets are tracked directly in the git repository:
 
 ## 6. Suggestions for Discussion
 
-1. **For `HiGHS_jll` & Yggdrasil**:
-   Is there potential to introduce architecture-optimized builds or LTO flags in `HiGHS/build_tarballs.jl`? For micro-solves in sequential workflows (JuMP warm-starts, progressive hedging, Benders decomposition), closing the $4\times$ gap between `HiGHS_jll` and native compilation would provide an immediate speedup to JuMP users without changing a single line of model code.
+1. **For the official artifact & Yggdrasil**:
+   Is there potential to introduce architecture-optimized builds or LTO flags in `HiGHS/build_tarballs.jl`? The current snapshot shows a roughly $4\times$ gap between the official artifact and a local build for this micro-solve workload; the command should be rerun on each target machine before drawing a general conclusion.
 
 2. **For HiGHS C++ (Upstream)**:
-   A persistent buffer / workspace reuse mode (avoiding vector allocations on successive `highs.run()` calls when the basis and problem dimensions are unchanged) could potentially cut the remaining native C++ latency in half, bringing HiGHS C++ down to the 25 µs/solve range demonstrated by TinyHiGHS.
+   A persistent buffer / workspace reuse mode (avoiding vector allocations on successive `highs.run()` calls when the basis and problem dimensions are unchanged) is a possible direction. Its benefit should be measured with the replay harness rather than inferred from a fixed target latency.

@@ -51,7 +51,8 @@ Once correctness was established, the codebase was systematically re-architected
 #### The Problem in Upstream C++
 Profiling upstream HiGHS during warm-start sequences revealed significant hidden allocations:
 - Calling `highs.run()` or modifying bounds invokes routines that instantiate temporary vectors and resize buffers in `HEkk` and `HFactor`.
-- While negligible for large single solves, in high-frequency warm-start sequences (e.g., 100 solves in 15 ms), memory allocators dominate execution time.
+- While negligible for large single solves, allocation and buffer-management
+  overhead can dominate high-frequency warm-start sequences.
 
 #### The TinyHiGHS Solution
 In TinyHiGHS:
@@ -129,5 +130,5 @@ The original C++ port was coupled to internal data loaders. TinyHiGHS features a
 | **FTRAN / BTRAN Pivots** | Unconditional `val /= pivot` (per-pivot `FDIV`) | **Precomputed reciprocal `val *= pivot_inverse` (branchless)** |
 | **LP File I/O** | External / C++ test harnesses | **Native `read_lp` / `write_lp` in Julia stdlib** |
 | **Type Inférence** | Partial `Union` returns | **100% `@inferred` type stable** |
-| **Solve Time (`sequence_small`)** | ~223 µs / solve | **32.4 µs / solve (6.9x faster)** |
+| **Solve Time (`sequence_small`)** | 283.0 µs / solve (`HiGHS_artifact`) | **50.0 µs / solve (`TinyHiGHS_branchless`, 5.66x)** |
 | **Numerical Consistency** | Exact IEEE-754 match | **Exact for $\pm1$ / powers of two; branchless path <=1 ULP on arbitrary pivots** |

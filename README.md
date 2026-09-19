@@ -46,17 +46,32 @@ Replays continuous sequences of bound modifications and warm-start resolves on a
 julia --project=. bench/compare_sequences.jl
 ```
 
+For the full table below, including separate official-artifact and branchless
+configurations, run:
+
+```bash
+./contrib_highs/run_bench_cpp.sh
+julia --project=. bench/bench_3way.jl
+```
+
 To regenerate the checked-in sequence snapshots from their operation logs:
 
 ```bash
 julia --project=. bench/regenerate_sequence_assets.jl
 ```
 
-**Measured Results (Apple Silicon / AArch64):**
-| LP Sequence (`instances/sequences/`) | Solves | Dimensions | TinyHiGHS.jl (Total) | HiGHS C++ (Total) | Speedup | TinyHiGHS Time/Solve |
+**Reproducible benchmark snapshot (Apple Silicon / AArch64):**
+
+The values below are one run of `julia --project=. bench/bench_3way.jl` after
+`./contrib_highs/run_bench_cpp.sh` has built both C++ runners. Speedups in
+parentheses are relative to `HiGHS_artifact`; absolute timings vary with the
+machine and system load. The command prints fresh timings and `OK` objective
+checks on every run.
+
+| LP Sequence | Solves | HiGHS_artifact | HiGHS_branchless | TinyHiGHS branching | TinyHiGHS branchless | TinyHiGHS FDIV |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`sequence_small`** | 76 | $88 \times 107$ | **2.47 ms** | 28.71 ms | **11.6x** | **32.4 µs / solve** |
-| **`sequence_medium`** | 100 | $1\,240 \times 1\,483$ | **61.79 ms** | 140.21 ms | **2.3x** | **617.9 µs / solve** |
+| **`sequence_small`** | 76 | 21.51 ms (283.0 µs/solve) | **5.41 ms (71.2 µs, 3.98x)** | **4.06 ms (53.5 µs, 5.29x)** | **3.80 ms (50.0 µs, 5.66x)** | 3.92 ms (51.6 µs, 5.49x) |
+| **`sequence_medium`** | 100 | 269.25 ms (2692.5 µs/solve) | **222.33 ms (2223.3 µs, 1.21x)** | **159.71 ms (1597.1 µs, 1.69x)** | **160.71 ms (1607.1 µs, 1.68x)** | 160.29 ms (1602.9 µs, 1.68x) |
 
 ### 2. Cold-Start Individual LPs (`.lp` files)
 Solves individual benchmark instances and compares the default reference strategy
@@ -145,7 +160,7 @@ reciprocal.
 ### 2. Persistent Buffer Architecture (Zero Heap Allocations)
 In standard HiGHS C++, calling `highs.run()` or modifying problem bounds triggers multiple buffer resizes, memory reallocations, and state copies across the `Highs` -> `HEkk` -> `HFactor` hierarchy.
 * By contrast, TinyHiGHS keeps a single persistent workspace where scratch arrays and factorizations grow up to capacity and are cleared in-place.
-* This eliminates memory allocator churn, yielding solve times as low as **32 µs per warm-start resolve**.
+* The snapshot above reaches **50.0 µs per warm-start resolve** on the small sequence with the branchless strategy. Re-run the command above for your machine; this is not a fixed performance guarantee.
 * We propose this persistent buffer pattern as a roadmap item for future high-performance warm-start modes in upstream HiGHS.
 
 ---

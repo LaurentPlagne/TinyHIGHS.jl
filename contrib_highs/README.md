@@ -28,24 +28,20 @@ On modern x86-64 and AArch64 (Apple Silicon / Neoverse / AMD Zen / Intel Core) a
 - For $\pm 1.0$ pivots the result is **bit-for-bit identical** to division; for
   arbitrary pivots the tested reciprocal path stays within one ULP.
 
-### Concrete Benchmarks: Native HiGHS C++ (Before vs. Branchless Path)
-The patch was applied directly to **HiGHS 1.15.1** (`highs/util/HFactor.cpp`) and compiled with `-O3 -DNDEBUG` on Apple Silicon:
+### Concrete Benchmarks: Native HiGHS C++ (Official Artifact vs. Branchless Path)
 
-#### A. Single Cold-Start Solves (`instances/benchmarks/`)
-| Instance | HiGHS C++ Original | HiGHS_branchless | Speedup / Gain | Simplex Iterations | Objective Gap |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| `netflow_medium_02.lp` | 9.69 ms | **7.62 ms** | **+21.4 %** | 390 vs 390 | **0.0 (exact)** |
-| `netflow_large_01.lp` | 9.71 ms | **7.62 ms** | **+21.5 %** | 291 vs 291 | **0.0 (exact)** |
-| `netflow_small_02.lp` | 5.69 ms | **3.75 ms** | **+34.0 %** | 46 vs 46 | **0.0 (exact)** |
-| `netflow_small_01.lp` | 5.69 ms | **3.65 ms** | **+35.9 %** | 49 vs 49 | **0.0 (exact)** |
+The values below are a snapshot from `./contrib_highs/run_bench_cpp.sh` on
+Apple Silicon. That command recompiles the replay drivers, prints the library
+paths, and runs the exact same sequences; rerun it to obtain fresh timings.
 
-#### B. Warm-Start Sequences (100% Native C++ API Replay, Zero Julia)
-Replayed through `contrib_highs/cpp/replay_sequence.cpp` using official `Highs` C++ API:
+| Sequence | Solves | HiGHS artifact | HiGHS_branchless | Speedup |
+| :--- | :---: | :---: | :---: | :---: |
+| `sequence_small` | 76 | 18.90 ms (248.6 µs/solve) | **8.56 ms (112.6 µs/solve)** | **2.21x** |
+| `sequence_medium` | 100 | 280.96 ms (2809.6 µs/solve) | **236.13 ms (2361.3 µs/solve)** | **1.19x** |
 
-| Sequence (`instances/sequences/`) | Solves | HiGHS C++ Original | HiGHS_branchless | Speedup | Iterations | Final Obj Gap |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `sequence_small` | 76 | 16.97 ms (223 µs/solve) | **4.10 ms (54 µs/solve)** | **4.14x (+75.8%)** | 47 vs 47 | **0.0 (exact)** |
-| `sequence_medium` | 100 | 182.50 ms (1.82 ms/solve) | **148.27 ms (1.48 ms/solve)** | **1.23x (+18.8%)** | 549 vs 549 | **0.0 (exact)** |
+Both runners returned status code `7`; the final objectives were identical in
+this run (`7.60420905` and `-3717944.535`). These are timing snapshots rather
+than performance guarantees.
 
 ---
 
@@ -95,7 +91,7 @@ Then navigate to `https://github.com/ERGO-Code/HiGHS` and click **"Compare & pul
 
 ## 4. Future Roadmap: Zero-Allocation Persistent Buffer Architecture
 
-During stochastic optimization sequences, **[TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl) reaches 32.4 µs per solve** (compared to 54 µs for `HiGHS_branchless` and 223 µs for the official artifact):
+In the three-way Julia snapshot, **[TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl) reaches 50.0 µs per solve** on `sequence_small` with `kPivotBranchless` (compared to 71.2 µs for `HiGHS_branchless` and 283.0 µs for the official artifact). Re-run `julia --project=. bench/bench_3way.jl` for fresh timings:
 - **Root cause of the remaining gap**: In HiGHS C++, calling `highs.run()` or modifying bounds dynamically reallocates and resizes `std::vector` buffers across the `Highs` -> `HEkk` -> `HFactor` hierarchy.
 - **Proposed roadmap item for HiGHS 2.x**: Introduce a dedicated "persistent buffer" warm-start mode where workspace memory is allocated once up to capacity and reused in-place across successive resolves with zero heap allocations.
 - **Open-source Reference**: The full zero-allocation implementation and reproducibility scripts are available at:
