@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>System Architecture · TinyHiGHS.jl</title><meta name="title" content="System Architecture · TinyHiGHS.jl"/><meta property="og:title" content="System Architecture · TinyHiGHS.jl"/><meta property="twitter:title" content="System Architecture · TinyHiGHS.jl"/><meta name="description" content="Documentation for TinyHiGHS.jl."/><meta property="og:description" content="Documentation for TinyHiGHS.jl."/><meta property="twitter:description" content="Documentation for TinyHiGHS.jl."/><meta property="og:url" content="https://LaurentPlagne.github.io/TinyHIGHS.jl/architecture/"/><meta property="twitter:url" content="https://LaurentPlagne.github.io/TinyHIGHS.jl/architecture/"/><link rel="canonical" href="https://LaurentPlagne.github.io/TinyHIGHS.jl/architecture/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.63.2/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script><script src="../assets/mermaid.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">TinyHiGHS.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li><a class="tocitem" href="../quickstart/">Quick Start</a></li><li class="is-active"><a class="tocitem" href>System Architecture</a><ul class="internal"><li><a class="tocitem" href="#High-Level-Architecture-Diagram"><span>High-Level Architecture Diagram</span></a></li><li><a class="tocitem" href="#Revised-Simplex-Iteration-Lifecycle"><span>Revised Simplex Iteration Lifecycle</span></a></li><li><a class="tocitem" href="#Core-Components"><span>Core Components</span></a></li></ul></li><li><a class="tocitem" href="../porting_optimizations/">Evolution &amp; Optimizations</a></li><li><a class="tocitem" href="../benchmarks/">Benchmarks</a></li><li><a class="tocitem" href="../api/">API Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>System Architecture</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>System Architecture</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/LaurentPlagne/TinyHIGHS.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/LaurentPlagne/TinyHIGHS.jl/blob/main/docs/src/architecture.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="System-Architecture"><a class="docs-heading-anchor" href="#System-Architecture">System Architecture</a><a id="System-Architecture-1"></a><a class="docs-heading-anchor-permalink" href="#System-Architecture" title="Permalink"></a></h1><p>TinyHiGHS is organized into modular layers designed for maximal memory efficiency, cache locality, and numerical stability.</p><hr/><h2 id="High-Level-Architecture-Diagram"><a class="docs-heading-anchor" href="#High-Level-Architecture-Diagram">High-Level Architecture Diagram</a><a id="High-Level-Architecture-Diagram-1"></a><a class="docs-heading-anchor-permalink" href="#High-Level-Architecture-Diagram" title="Permalink"></a></h2><p>The diagram below illustrates how data and control flow through TinyHiGHS:</p><pre><code class="language-mermaid hljs">classDiagram
+    class SimplexLp {
+        +Int num_col
+        +Int num_row
+        +SparseMatrix a_matrix
+        +Vector~Float64~ col_cost
+        +Vector~Float64~ col_lower, col_upper
+        +Vector~Float64~ row_lower, row_upper
+    }
+
+    class SimplexEngine {
+        +SimplexLp lp
+        +SimplexBasis basis
+        +SimplexInfo info
+        +Nla nla
+        +SimplexStatus status
+        +solve!()
+        +change_col_bounds!()
+        +change_row_bounds!()
+    }
+
+    class HFactor {
+        +Int num_row
+        +Vector~Int~ basic_index
+        +build!()
+        +ftranCall!()
+        +btranCall!()
+        +update!()
+    }
+
+    class HVector {
+        +Int size
+        +Int count
+        +Vector~Int~ index
+        +Vector~Float64~ array
+        +tight!()
+        +pack!()
+        +saxpy!()
+    }
+
+    class DualSolver {
+        +HVector row_ep
+        +HVector row_ap
+        +HVector col_aq
+        +HVector col_BFRT
+        +solvePhase1!()
+        +solvePhase2!()
+    }
+
+    class PrimalSolver {
+        +HVector row_ep
+        +HVector row_ap
+        +HVector col_aq
+        +solvePhase1!()
+        +solvePhase2!()
+    }
+
+    SimplexEngine --&gt; SimplexLp : holds
+    SimplexEngine --&gt; HFactor : basis factorization
+    SimplexEngine --&gt; DualSolver : dual iterations
+    SimplexEngine --&gt; PrimalSolver : primal iterations
+    DualSolver --&gt; HVector : sparse vectors
+    PrimalSolver --&gt; HVector : sparse vectors</code></pre><hr/><h2 id="Revised-Simplex-Iteration-Lifecycle"><a class="docs-heading-anchor" href="#Revised-Simplex-Iteration-Lifecycle">Revised Simplex Iteration Lifecycle</a><a id="Revised-Simplex-Iteration-Lifecycle-1"></a><a class="docs-heading-anchor-permalink" href="#Revised-Simplex-Iteration-Lifecycle" title="Permalink"></a></h2><p>In the dual simplex method (default), each iteration performs a pivot to drive primal infeasibilities to zero while maintaining dual feasibility.</p><pre><code class="language-mermaid hljs">sequenceDiagram
+    autonumber
+    participant D as DualSolver
+    participant E as SimplexEngine
+    participant H as HFactor (LU)
+    participant V as HVector Workspaces
+
+    Note over D: Step 1: Ratio Test &amp; Row Selection
+    D-&gt;&gt;D: chooseRow (DSE or Devex pricing)
+    Note right of D: Identifies leaving variable (row_out)
+
+    Note over D,H: Step 2: Backward Transformation (BTRAN)
+    D-&gt;&gt;H: btranCall!(row_ep) where row_ep = e_{row_out}
+    H--&gt;&gt;D: π = B^{-T} e_{row_out}
+
+    Note over D,V: Step 3: Tableau Row Pricing
+    D-&gt;&gt;V: tableau_row_price!(row_ap = π^T A)
+    
+    Note over D: Step 4: Column Selection
+    D-&gt;&gt;D: chooseColumn via Bound-Flipping Ratio Test (BFRT)
+    Note right of D: Identifies entering variable (variable_in)
+
+    Note over D,H: Step 5: Forward Transformation (FTRAN)
+    D-&gt;&gt;H: ftranCall!(col_aq) where col_aq = A_{*, variable_in}
+    H--&gt;&gt;D: α = B^{-1} A_{*, variable_in}
+
+    Note over D,H: Step 6: Basis &amp; Factorization Update
+    D-&gt;&gt;H: update!(col_aq, row_ep, row_out)
+    Note right of H: Forrest-Tomlin update in-place
+    D-&gt;&gt;E: update_pivots!(variable_in, row_out)</code></pre><hr/><h2 id="Core-Components"><a class="docs-heading-anchor" href="#Core-Components">Core Components</a><a id="Core-Components-1"></a><a class="docs-heading-anchor-permalink" href="#Core-Components" title="Permalink"></a></h2><h3 id="1.-SimplexEngine"><a class="docs-heading-anchor" href="#1.-SimplexEngine">1. <code>SimplexEngine</code></a><a id="1.-SimplexEngine-1"></a><a class="docs-heading-anchor-permalink" href="#1.-SimplexEngine" title="Permalink"></a></h3><p>The central state container. It owns the problem specification, basis history, control flags, and preallocated working memory. All algorithmic actions (dual iterations, primal iterations, scaling, perturbation, bound modifications) operate on this engine.</p><h3 id="2.-HVector-(Sparse/Dense-Workspaces)"><a class="docs-heading-anchor" href="#2.-HVector-(Sparse/Dense-Workspaces)">2. <code>HVector</code> (Sparse/Dense Workspaces)</a><a id="2.-HVector-(Sparse/Dense-Workspaces)-1"></a><a class="docs-heading-anchor-permalink" href="#2.-HVector-(Sparse/Dense-Workspaces)" title="Permalink"></a></h3><p>HiGHS and TinyHiGHS rely on a hybrid sparse/dense vector structure:</p><ul><li>A dense array of length <span>$m$</span> provides <span>$O(1)$</span> lookup.</li><li>A non-zero index list <code>index[1:count]</code> enables <span>$O(\text{nnz})$</span> sparse traversal and hyper-sparse graph walks.</li><li>When fill-in exceeds ~30%, routines automatically switch to dense SIMD loops to maximize hardware memory bandwidth.</li></ul><h3 id="3.-HFactor-(LU-Basis-Factorization)"><a class="docs-heading-anchor" href="#3.-HFactor-(LU-Basis-Factorization)">3. <code>HFactor</code> (LU Basis Factorization)</a><a id="3.-HFactor-(LU-Basis-Factorization)-1"></a><a class="docs-heading-anchor-permalink" href="#3.-HFactor-(LU-Basis-Factorization)" title="Permalink"></a></h3><p>Maintains the factorization <span>$P B Q = L U$</span>:</p><ul><li><strong>Initial Factorization (<code>build!</code>)</strong>: Uses Markowitz threshold pivoting to minimize fill-in.</li><li><strong>Basis Updates (<code>update!</code>)</strong>: Applies Forrest-Tomlin updates to maintain <span>$L$</span> and <span>$U$</span> without full refactorization.</li><li><strong>Unit Pivot Bypass</strong>: Directly executes <span>$x / (\pm 1.0)$</span> as identity or negation, avoiding hardware <code>FDIV</code> stalls.</li></ul><h3 id="4.-DualSolver-and-PrimalSolver"><a class="docs-heading-anchor" href="#4.-DualSolver-and-PrimalSolver">4. <code>DualSolver</code> &amp; <code>PrimalSolver</code></a><a id="4.-DualSolver-and-PrimalSolver-1"></a><a class="docs-heading-anchor-permalink" href="#4.-DualSolver-and-PrimalSolver" title="Permalink"></a></h3><ul><li><strong>Dual Steepest Edge (DSE)</strong>: Provides steep progress directions with adaptive switching to Devex if weight computation becomes expensive.</li><li><strong>Bound-Flipping Ratio Test (BFRT)</strong>: Allows passing multiple non-basic bounds in a single iteration, dramatically cutting down iteration counts on box-constrained models.</li><li><strong>Cycling Mitigation</strong>: 64-bit basis hash tracking and taboo lists prevent degeneracy loops.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../quickstart/">« Quick Start</a><a class="docs-footer-nextpage" href="../porting_optimizations/">Evolution &amp; Optimizations »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.19.0 on <span class="colophon-date" title="Saturday 19 September 2026 12:44">Saturday 19 September 2026</span>. Using Julia version 1.13.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
