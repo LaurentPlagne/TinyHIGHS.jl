@@ -104,15 +104,17 @@ git clone https://github.com/LaurentPlagne/TinyHIGHS.jl.git
 cd TinyHIGHS.jl
 
 # 2. Run the automated C++ comparison
-# (Optionally set HIGHS_INSTALL=/path/to/local/highs if you have a local build)
+# The runner auto-detects ../HiGHS/build when it is checked out next to this
+# repository. Alternatively set HIGHS_DIR=/path/to/HiGHS or
+# HIGHS_BUILD_DIR=/path/to/HiGHS/build.
 ./contrib_highs/run_bench_cpp.sh
 ```
 
 **What this script does:**
 1. Compiles `contrib_highs/cpp/replay_sequence.cpp` using official C++ API calls (`Highs::readModel`, `Highs::changeColBounds`, `Highs::run`).
-2. Links against the official `HiGHS_jll` artifact (`replay_sequence_original`).
-3. Links against your locally compiled native HiGHS (`replay_sequence`).
-4. Replays `sequence_small` and `sequence_medium` and prints timing and objective validation.
+2. Links `replay_sequence_original` against the official `HiGHS_jll` artifact and its matching public headers.
+3. Links `replay_sequence` against the selected local/native HiGHS build.
+4. Replays `sequence_small` and `sequence_medium` and prints timing, iterations, and objective validation.
 
 ---
 

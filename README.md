@@ -91,18 +91,26 @@ never mistaken for a correctness validation.
 
 ### 5. Configuring HiGHS C++ Location (Custom Build vs Julia Artifact)
 
-By default, TinyHiGHS benchmarks automatically detect and use the official HiGHS binary/library shipped via Julia's artifact system (`~/.julia/artifacts/...`) or in your system `PATH` — **zero manual configuration or C++ compilation required**.
+By default, the native runner first looks for a sibling `HiGHS/build` checkout
+(the recommended way to test the patch), then checks the paths below, and finally
+falls back to the official HiGHS artifact shipped via Julia. It recompiles the
+small C++ driver on every invocation and prints the selected library paths, so a
+stale binary cannot silently turn the A/B comparison into two runs of the same
+library.
 
 However, if you wish to benchmark against a **custom C++ build** (such as your local clone with the `HFactor` optimization patch applied):
 
 ```bash
-# Point to a custom CMake build directory (containing bin/highs and lib/libhighs):
-export HIGHS_DIR=/path/to/HiGHS/build
+# Point to a HiGHS source checkout containing build/lib/libhighs:
+export HIGHS_DIR=/path/to/HiGHS
+
+# Or point directly to its CMake build directory:
+export HIGHS_BUILD_DIR=/path/to/HiGHS/build
 
 # Or point to a custom installation prefix:
 export HIGHS_INSTALL=/path/to/HiGHS/install
 
-# Or directly specify the highs executable:
+# For the Julia-to-CLI comparison only, specify the highs executable:
 export HIGHS_BIN=/path/to/HiGHS/build/bin/highs
 
 # Then run the benchmark as usual:

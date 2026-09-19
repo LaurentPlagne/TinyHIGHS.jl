@@ -21,11 +21,13 @@ cd TinyHIGHS.jl
 julia --project=. bench/bench_3way.jl
 ```
 
-Le script C++ détecte automatiquement l’artefact HiGHS fourni par Julia. Pour
-tester une compilation locale, définir `HIGHS_INSTALL` ou `HIGHS_DIR` avant de
-lancer le replay. Le benchmark Julia continue à produire les résultats
-TinyHiGHS même lorsqu’un binaire C++ de comparaison n’est pas disponible, et
-signale explicitement toute divergence d’objectif.
+Le script C++ détecte en priorité un checkout local `../HiGHS/build`, puis les
+variables `HIGHS_DIR`, `HIGHS_BUILD_DIR` ou `HIGHS_INSTALL`, et utilise l’artefact
+HiGHS fourni par Julia en dernier recours. Il affiche les bibliothèques réellement
+chargées et recompile les drivers à chaque exécution. Le benchmark Julia
+continue à produire les résultats TinyHiGHS même lorsqu’un binaire C++ de
+comparaison n’est pas disponible, et signale explicitement toute divergence
+d’objectif.
 
 Bien cordialement,
 

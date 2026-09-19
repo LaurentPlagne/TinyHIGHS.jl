@@ -50,9 +50,15 @@ cd TinyHIGHS.jl
 ```
 
 This script:
-1. Compiles `contrib_highs/cpp/replay_sequence.cpp` using `clang++ -O3 -std=c++11` against `libhighs`.
-2. Runs side-by-side A/B comparison between official HiGHS and patched HiGHS.
-3. Reports average time per solve in microseconds, simplex iterations, and objective equivalence.
+1. Locates a local `HiGHS/build` checkout when present (or accepts
+   `HIGHS_DIR`, `HIGHS_BUILD_DIR`, or `HIGHS_INSTALL`), with the Julia artifact
+   as a fallback.
+2. Compiles `contrib_highs/cpp/replay_sequence.cpp` using
+   `clang++ -O3 -std=c++11` against the selected `libhighs`.
+3. Runs side-by-side A/B comparison between the official HiGHS artifact and the
+   selected build. The official binary is compiled with the artifact's own
+   headers to avoid an ABI mismatch.
+4. Reports average time per solve in microseconds, simplex iterations, and objective equivalence.
 
 ---
 
