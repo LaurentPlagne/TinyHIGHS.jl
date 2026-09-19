@@ -2,8 +2,9 @@
     TinyHiGHS
 
 Pure, standalone Julia port of the revised dual and primal simplex solver from HiGHS (MIT License).
-Optimized for high-performance zero-allocation warm-start re-optimization of sequential
-linear programs (LPs), network flow subproblems, and mathematical decomposition loops.
+Optimized for high-performance warm-start re-optimization of sequential linear programs
+(LPs), network flow subproblems, and mathematical decomposition loops, with persistent
+workspaces designed to minimize allocation overhead.
 """
 module TinyHiGHS
 

@@ -137,7 +137,7 @@ Persistent working buffers, primal/dual vectors, objective values, and algorithm
 state for `SimplexEngine`.
 
 All buffers are sized to `num_col + num_row` (or `num_row`) and preallocated up-front.
-During iterative resolves, these buffers are reused in-place with zero memory allocation.
+During iterative resolves, these buffers are reused in-place to minimize allocation overhead.
 
 Key fields:
 - `workValue`: Current values of all variables (structural + slacks).

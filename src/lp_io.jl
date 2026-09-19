@@ -477,8 +477,9 @@ rebuilds and refactorizations in-place.
 
 # Performance Note
 When reusing the same `engine` across a sequence of resolves with modified bounds or costs
-(`change_col_bounds!`, `change_row_bounds!`, `change_cols_cost!`), this method achieves
-**zero heap allocations** and microsecond warm-start resolution times.
+(`change_col_bounds!`, `change_row_bounds!`, `change_cols_cost!`), this method reuses the
+persistent workspace. Measure allocations and latency with the supplied benchmark on the
+target Julia version and workload.
 """
 function solve!(engine::SimplexEngine; algorithm=kDual)
     initialise_for_solve!(engine)

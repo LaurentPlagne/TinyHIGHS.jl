@@ -159,7 +159,8 @@ Encapsulates:
 # Warm-Starting
 `SimplexEngine` is designed for high-frequency repeated solves: modify bounds or costs using
 `change_col_bounds!`, `change_row_bounds!`, `change_cols_cost!` and call `solve!(engine)` to
-perform warm-start re-optimization with zero memory allocation.
+perform warm-start re-optimization while reusing its persistent workspace. Allocation
+behavior depends on the selected path and Julia version; measure it on the target workload.
 """
 mutable struct SimplexEngine
     lp::SimplexLp
