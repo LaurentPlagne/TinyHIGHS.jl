@@ -1,8 +1,8 @@
 # ==============================================================================
-# Benchmark Comparatif 3-Voies :
-#   1. HiGHS C++ (Artefact Julia officiel HiGHS_jll v1.15.1)
-#   2. HiGHS C++ (Compilé localement avec clang++ -O3)
-#   3. TinyHiGHS.jl (Julia natif zéro-allocation, 3 stratégies de pivot)
+# Benchmark comparatif :
+#   1. HiGHS_artifact (artefact Julia officiel HiGHS_jll v1.15.1)
+#   2. HiGHS_branchless (build local de la PR perf/simd-branchless-pivots)
+#   3. TinyHiGHS (Julia natif zéro-allocation, stratégies de pivot)
 # ==============================================================================
 
 using Printf
@@ -89,8 +89,9 @@ end
 
 function run_full_3way_benchmark()
     println("="^100)
-    println(" BENCHMARK COMPARATIF 3-VOIES : ARTEFACT JULIA vs C++ LOCAL vs TinyHiGHS.jl")
+    println(" BENCHMARK COMPARATIF : HiGHS_artifact vs HiGHS_branchless vs TinyHiGHS")
     println(" Machine : ", Sys.MACHINE, " (", Sys.KERNEL, ")")
+    println(" Baseline C++ non patchée : HiGHS_artifact; le build local est HiGHS_branchless.")
     println("="^100)
     
     sequences = [
@@ -106,10 +107,10 @@ function run_full_3way_benchmark()
         println(">>> Séquence : $name ($reps répétitions pour le meilleur temps)")
         println("-"^100)
         
-        # 1. HiGHS Artefact JLL
+        # 1. HiGHS_artifact: official Julia artifact, used as the baseline.
         res_art = run_cpp_benchmark(BIN_ORIGINAL, base_lp, ops_file, reps)
         
-        # 2. HiGHS C++ Local
+        # 2. HiGHS_branchless: local C++ build selected by run_bench_cpp.sh.
         res_loc = run_cpp_benchmark(BIN_LOCAL, base_lp, ops_file, reps)
         
         # 3. TinyHiGHS (Branching)
@@ -125,11 +126,11 @@ function run_full_3way_benchmark()
                 "Moteur / Configuration", "Temps total", "Temps / solve", "Speedup vs Art.", "Objectif", "Statut")
         println("-"^100)
 
-        _print_benchmark_row("1. HiGHS C++ (Artefact JLL v1.15)", res_art, nothing)
-        _print_benchmark_row("2. HiGHS C++ (Compilé local -O3)", res_loc, res_art)
-        _print_benchmark_row("3. TinyHiGHS.jl (Branching)", res_tiny_br, res_art)
-        _print_benchmark_row("4. TinyHiGHS.jl (Branchless SIMD)", res_tiny_bl, res_art)
-        _print_benchmark_row("5. TinyHiGHS.jl (Original FDIV)", res_tiny_fd, res_art)
+        _print_benchmark_row("1. HiGHS_artifact (official v1.15)", res_art, nothing)
+        _print_benchmark_row("2. HiGHS_branchless (local PR, -O3)", res_loc, res_art)
+        _print_benchmark_row("3. TinyHiGHS (branching)", res_tiny_br, res_art)
+        _print_benchmark_row("4. TinyHiGHS_branchless (SIMD)", res_tiny_bl, res_art)
+        _print_benchmark_row("5. TinyHiGHS (FDIV reference)", res_tiny_fd, res_art)
 
         if res_art !== nothing
             for (label, result) in (("Branching", res_tiny_br), ("Branchless SIMD", res_tiny_bl), ("Original FDIV", res_tiny_fd))
