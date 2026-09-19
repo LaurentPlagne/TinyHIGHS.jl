@@ -11,7 +11,7 @@ CXX="${CXX:-clang++}"
 
 # Détection de l'installation HiGHS C++ locale (patchée ou custom)
 HIGHS_INSTALL="${HIGHS_INSTALL:-${HIGHS_DIR:-$(cd "$SCRIPT_DIR/../../HiGHS/install" 2>/dev/null && pwd || cd "$SCRIPT_DIR/../.."/*/third_party/solvers/install/highs 2>/dev/null && pwd || true)}}"
-ORIGINAL_HIGHS_LIB="${ORIGINAL_HIGHS_LIB:-$(find "$HOME/.julia/artifacts" -maxdepth 3 \( -name "libhighs.1.15*dylib" -o -name "libhighs.1.15*so" \) 2>/dev/null | head -n 1 | xargs dirname 2>/dev/null || find "$HOME/.julia/artifacts" -maxdepth 3 -name "libhighs.*" 2>/dev/null | head -n 1 | xargs dirname 2>/dev/null || true)}"
+ORIGINAL_HIGHS_LIB="${ORIGINAL_HIGHS_LIB:-$(find "$HOME/.julia/artifacts" -maxdepth 4 \( -name "libhighs*.dylib" -o -name "libhighs*.so" \) 2>/dev/null | head -n 1 | xargs dirname 2>/dev/null || true)}"
 
 if [ -z "$HIGHS_INSTALL" ] || [ ! -d "$HIGHS_INSTALL" ]; then
     echo "Erreur: Répertoire d'installation de HiGHS non trouvé."
@@ -47,7 +47,7 @@ if [ -d "$ORIGINAL_HIGHS_LIB" ] && [ -f "$ORIGINAL_HIGHS_LIB/libhighs.dylib" -o 
         "$CPP_DIR/replay_sequence.cpp" \
         -o "$BIN_ORIGINAL" 2>/dev/null || true
     fi
-    if [ -f "$BIN_ORIGINAL" ] && "$BIN_ORIGINAL" 2>&1 | grep -q "Usage"; then
+    if [ -f "$BIN_ORIGINAL" ] && ("$BIN_ORIGINAL" 2>&1 || true) | grep -q "Usage"; then
         HAS_ORIGINAL=true
     fi
 fi
