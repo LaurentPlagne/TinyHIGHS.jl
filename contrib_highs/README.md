@@ -1,6 +1,6 @@
 # Upstream Contribution Proposal for HiGHS C++
 
-This document summarizes performance optimizations identified, validated, and benchmarked during the development of **[TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)** (a faithful, zero-allocation pure Julia port of HiGHS's dual and primal revised simplex solvers).
+This document summarizes performance optimizations identified, validated, and benchmarked during the development of **[TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)** (a faithful pure Julia port of HiGHS's dual and primal revised simplex solvers with persistent workspaces).
 
 The branchless reciprocal path applies the same multiply to every diagonal pivot:
 there is no unit-pivot special case in the hot loop. It is bit-for-bit exact for
@@ -89,10 +89,10 @@ Then navigate to `https://github.com/ERGO-Code/HiGHS` and click **"Compare & pul
 
 ---
 
-## 4. Future Roadmap: Zero-Allocation Persistent Buffer Architecture
+## 4. Future Roadmap: Persistent Buffer Architecture
 
 In the three-way Julia snapshot, **[TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl) reaches 50.0 µs per solve** on `sequence_small` with `kPivotBranchless` (compared to 71.2 µs for `HiGHS_branchless` and 283.0 µs for the official artifact). Re-run `julia --project=. bench/bench_3way.jl` for fresh timings:
 - **Root cause of the remaining gap**: In HiGHS C++, calling `highs.run()` or modifying bounds dynamically reallocates and resizes `std::vector` buffers across the `Highs` -> `HEkk` -> `HFactor` hierarchy.
-- **Proposed roadmap item for HiGHS 2.x**: Introduce a dedicated "persistent buffer" warm-start mode where workspace memory is allocated once up to capacity and reused in-place across successive resolves with zero heap allocations.
-- **Open-source Reference**: The full zero-allocation implementation and reproducibility scripts are available at:
+- **Proposed roadmap item for HiGHS 2.x**: Introduce a dedicated "persistent buffer" warm-start mode where workspace memory is allocated once up to capacity and reused in-place across successive resolves, with allocation behavior measured explicitly for each workload.
+- **Open-source Reference**: The implementation and reproducibility scripts are available at:
   👉 **[https://github.com/LaurentPlagne/TinyHIGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)**

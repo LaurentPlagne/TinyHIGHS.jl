@@ -1,6 +1,6 @@
-# From C++ to Zero-Allocation Julia: Evolution & Optimizations
+# From C++ to Allocation-Conscious Julia: Evolution & Optimizations
 
-This document details the engineering journey of **TinyHiGHS.jl**: how it evolved from a literal line-by-line transcription of HiGHS's C++ source code into a highly optimized, idiomatic, zero-allocation pure Julia solver.
+This document details the engineering journey of **TinyHiGHS.jl**: how it evolved from a literal line-by-line transcription of HiGHS's C++ source code into a highly optimized, idiomatic pure Julia solver with persistent, allocation-conscious workspaces.
 
 ---
 
@@ -13,7 +13,7 @@ In this regime:
 2. **Dynamic Memory Allocation**: In standard C++ solvers, each solve (even when warm-started) reallocates and resizes internal `std::vector` buffers across solver layers.
 3. **Latency Matters More Than Throughput**: The bottleneck shifts from matrix factorization complexity to memory allocation latency, cache locality, and function call overhead.
 
-**Goal of TinyHiGHS.jl**: Achieve microsecond-level solve times (under 50 µs) with **strictly zero heap allocations** during repeated resolves, while retaining a **bit-for-bit reference path** compatible with HiGHS. The optional branchless reciprocal path is validated with a one-ULP bound for arbitrary pivots.
+**Goal of TinyHiGHS.jl**: Achieve microsecond-level solve times (under 50 µs) with allocation-conscious repeated resolves, while retaining a **bit-for-bit reference path** compatible with HiGHS. Allocation counts are workload- and Julia-version-dependent and should be verified with the supplied benchmark. The optional branchless reciprocal path is validated with a one-ULP bound for arbitrary pivots.
 
 ---
 
@@ -46,7 +46,7 @@ A direct C++ to Julia translation presents specific pitfalls:
 
 Once correctness was established, the codebase was systematically re-architected to exploit Julia's high-performance capabilities and eliminate micro-architectural bottlenecks.
 
-### A. Zero-Allocation Persistent Buffer Architecture
+### A. Persistent Buffer Architecture
 
 #### The Problem in Upstream C++
 Profiling upstream HiGHS during warm-start sequences revealed significant hidden allocations:
@@ -58,7 +58,7 @@ Profiling upstream HiGHS during warm-start sequences revealed significant hidden
 In TinyHiGHS:
 1. All working arrays in `SimplexInfo` and `HVector` workspaces (`row_ep`, `row_ap`, `col_aq`, `col_BFRT`) are allocated **once** during `SimplexEngine` construction, sized to the problem capacity (`num_col + num_row`).
 2. Subsequent in-place modifications (`change_col_bounds!`, `change_row_bounds!`, `change_cols_cost!`) update vectors directly and mark dirty flags without allocating new memory.
-3. Resolves execute with **0 bytes allocated** and **0 GC cycles**.
+3. The hot kernels are designed to reuse buffers; the benchmark reports the observed allocation count and GC behavior.
 
 ```mermaid
 graph TD
@@ -67,9 +67,9 @@ graph TD
         Build[Initial LU Factorization]
     end
     subgraph "Warm-Start Sequence (Repeated N times)"
-        Mod[change_col_bounds! in-place: 0 bytes]
-        Solve[solve!: in-place LU update + resolve: 0 bytes]
-        Sol[Solution extraction: 0 bytes]
+        Mod[change_col_bounds! in-place]
+        Solve[solve!: in-place LU update + resolve]
+        Sol[Solution extraction]
         Mod --> Solve --> Sol --> Mod
     end
     Alloc --> Build --> Mod
@@ -126,7 +126,7 @@ The original C++ port was coupled to internal data loaders. TinyHiGHS features a
 | Feature / Aspect | Initial Literal Port | TinyHiGHS.jl |
 | :--- | :--- | :--- |
 | **Language & Dependencies** | C++ dependent (requires compiler & oracle) | **100% Pure Julia, zero dependencies** |
-| **Warm-Start Resolves** | Reallocated temporary arrays | **Strictly 0 bytes allocated** |
+| **Warm-Start Resolves** | Reallocated temporary arrays | **Persistent buffers; verify allocations with the benchmark** |
 | **FTRAN / BTRAN Pivots** | Unconditional `val /= pivot` (per-pivot `FDIV`) | **Precomputed reciprocal `val *= pivot_inverse` (branchless)** |
 | **LP File I/O** | External / C++ test harnesses | **Native `read_lp` / `write_lp` in Julia stdlib** |
 | **Type Inférence** | Partial `Union` returns | **100% `@inferred` type stable** |

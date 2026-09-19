@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+title: "TinyHiGHS.jl"
+type: software
+authors:
+  - family-names: Plagne
+    given-names: Laurent
+version: "0.1.0"
+date-released: "2026-09-19"
+url: "https://github.com/LaurentPlagne/TinyHIGHS.jl"
+repository-code: "https://github.com/LaurentPlagne/TinyHIGHS.jl"
+license: MIT
+abstract: "Pure-Julia revised simplex engines and reproducible warm-start benchmarks derived from HiGHS."

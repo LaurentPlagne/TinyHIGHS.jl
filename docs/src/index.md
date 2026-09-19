@@ -1,6 +1,6 @@
 # TinyHiGHS.jl
 
-*High-performance, zero-allocation revised simplex solver in 100% pure Julia.*
+*High-performance revised simplex solver in 100% pure Julia, with allocation-conscious warm-start paths.*
 
 [![CI](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/CI.yml)
 [![Documentation](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/Documentation.yml/badge.svg)](https://LaurentPlagne.github.io/TinyHIGHS.jl/dev/)
@@ -10,7 +10,7 @@
 
 ## Overview
 
-**TinyHiGHS.jl** is a faithful, standalone, zero-allocation pure Julia implementation of the dual and primal revised simplex solvers from the state-of-the-art **[HiGHS](https://github.com/ERGO-Code/HiGHS)** linear programming library (MIT License).
+**TinyHiGHS.jl** is a faithful, standalone pure Julia implementation of the dual and primal revised simplex solvers from the state-of-the-art **[HiGHS](https://github.com/ERGO-Code/HiGHS)** linear programming library (MIT License). Its persistent workspaces are designed for allocation-conscious warm-start sequences.
 
 It is specifically architected for scenarios where linear programs must be solved repeatedly in tight computational loops—such as **Stochastic Dual Dynamic Programming (SDDP)**, **Benders decomposition**, **Branch-and-Price**, and **Network Flow simulations**—where standard FFI overhead and dynamic memory allocation become severe performance bottlenecks.
 
@@ -31,7 +31,7 @@ graph TD
 
 ## Key Highlights
 
-- 🚀 **Zero Allocations in Warm-Start Resolves**: Once initialized, repeated resolves with modified bounds or objective costs require **0 bytes allocated** and execute in **30 to 50 microseconds** per solve.
+- 🚀 **Persistent Warm-Start Resolves**: Once initialized, repeated resolves reuse solver workspaces. Allocation and latency are reported by the supplied benchmark and must be re-measured on the target Julia version and hardware.
 - ⚡ **Branchless Reciprocal Substitution**: Pre-inverts the diagonal pivots in
   `HFactor` with a compiler-vectorized pass and replaces per-pivot `FDIV` with a
   multiplication in FTRAN/BTRAN and `solveHyper`.
@@ -55,9 +55,9 @@ status, obj, engine = solve_lp(lp)
 println("Status: ", status)
 println("Objective: ", obj)
 
-# 3. High-performance warm-start: modify bounds and resolve with 0 allocations!
+# 3. High-performance warm-start: modify bounds and resolve using the persistent workspace.
 change_col_bounds!(engine, 1, 0.0, 50.0)
-status_warm = solve!(engine) # 0 bytes allocated after warm-up; measure locally
+status_warm = solve!(engine) # measure allocations locally on your workload
 ```
 
 ---
@@ -66,15 +66,15 @@ status_warm = solve!(engine) # 0 bytes allocated after warm-up; measure locally
 
 | Benchmark Instance | Solves | HiGHS_artifact | HiGHS_branchless | TinyHiGHS branchless | Speedup vs artifact | Allocations |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `sequence_small` (warm-start) | 76 | 21.51 ms | 5.41 ms | **3.80 ms (50.0 µs/solve)** | **5.66x** | **0 bytes** |
-| `sequence_medium` (warm-start) | 100 | 269.25 ms | 222.33 ms | **160.71 ms (1.61 ms/solve)** | **1.68x** | **0 bytes** |
+| `sequence_small` (warm-start) | 76 | 21.51 ms | 5.41 ms | **3.80 ms (50.0 µs/solve)** | **5.66x** | measure locally |
+| `sequence_medium` (warm-start) | 100 | 269.25 ms | 222.33 ms | **160.71 ms (1.61 ms/solve)** | **1.68x** | measure locally |
 
 This is a reproducible snapshot from `julia --project=. bench/bench_3way.jl`
 (warm-start) on Apple Silicon. The cold-start table is maintained on the
 [Benchmark Suite](benchmarks.md) page. Timings vary with hardware and system
 load; rerun the commands for fresh values.
 
-See the [Benchmarks](benchmarks.md) and [From C++ to Zero-Allocation Julia](porting_optimizations.md) sections for complete details and reproduction scripts.
+See the [Benchmarks](benchmarks.md) and [From C++ to Allocation-Conscious Julia](porting_optimizations.md) sections for complete details and reproduction scripts.
 
 ---
 
@@ -82,6 +82,6 @@ See the [Benchmarks](benchmarks.md) and [From C++ to Zero-Allocation Julia](port
 
 - [Quick Start Guide](quickstart.md): Installation, model formulation, solving, and inspecting solutions.
 - [System Architecture](architecture.md): Deep-dive into `SimplexEngine`, `HFactor`, `HVector`, and solver algorithms.
-- [From C++ to Zero-Allocation Julia](porting_optimizations.md): Evolution, architectural enhancements, branchless substitution, and memory layout.
+- [From C++ to Allocation-Conscious Julia](porting_optimizations.md): Evolution, architectural enhancements, branchless substitution, and memory layout.
 - [Benchmark Suite](benchmarks.md): Methodology, reproducibility, and comparative analysis.
 - [API Reference](api.md): Complete reference for all exported types, functions, and control options.

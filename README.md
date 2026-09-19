@@ -4,7 +4,7 @@
 [![Documentation](https://github.com/LaurentPlagne/TinyHIGHS.jl/actions/workflows/Documentation.yml/badge.svg)](https://LaurentPlagne.github.io/TinyHIGHS.jl/dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**TinyHiGHS.jl** is a lightweight, zero-allocation, pure-Julia experimental port of the **dual and primal revised simplex engines** from [HiGHS](https://highs.dev/) (the premier open-source LP/MIP solver developed at the University of Edinburgh).
+**TinyHiGHS.jl** is a lightweight, allocation-conscious, pure-Julia experimental port of the **dual and primal revised simplex engines** from [HiGHS](https://highs.dev/) (the premier open-source LP/MIP solver developed at the University of Edinburgh).
 
 It is designed as an **algorithmic and micro-architectural research laboratory**: a sandbox to prototype, benchmark, and measure low-level optimizations (zero-allocation persistent buffers, sparse LU update paths, and division elimination) with the primary goal of **contributing performance improvements back upstream to HiGHS C++**.
 
@@ -18,7 +18,7 @@ TinyHiGHS is **not** a general-purpose replacement for HiGHS. Its scope is delib
 - **Dual Revised Simplex (`HEkkDual`)**: Dantzig pricing, Steepest-Edge / Devex weights, dual perturbation, and bound flips (BFRT).
 - **Primal Revised Simplex (`HEkkPrimal`)**: Direct primal phase 1 / phase 2 execution.
 - **Sparse LU Factorization (`HFactor`)**: Markowitz LU factorization with Forrest-Tomlin updates, hyper-sparse and sparse FTRAN / BTRAN passes.
-- **Persistent Engine & Zero-Allocation Warm-Start**: Persistent workspace buffers where solving sequences of modified LPs executes with **0 bytes allocated on the heap**.
+- **Persistent Engine & Warm-Start**: Persistent workspace buffers designed to keep repeated solves allocation-free in the measured hot kernels. Verify allocation behavior on the target Julia version and workload with the supplied benchmark.
 - **Self-Contained & Zero Dependencies**: 100% pure Julia stdlib (`Test`, `Random`, `Printf`), built-in lightweight `.lp` reader and writer.
 
 ### What is out of scope (use upstream [HiGHS](https://github.com/ERGO-Code/HiGHS) instead):
@@ -157,7 +157,7 @@ reciprocal.
   `perf/simd-branchless-pivots`. See [`contrib_highs/README.md`](contrib_highs/README.md)
   for implementation and reproduction details.
 
-### 2. Persistent Buffer Architecture (Zero Heap Allocations)
+### 2. Persistent Buffer Architecture
 In standard HiGHS C++, calling `highs.run()` or modifying problem bounds triggers multiple buffer resizes, memory reallocations, and state copies across the `Highs` -> `HEkk` -> `HFactor` hierarchy.
 * By contrast, TinyHiGHS keeps a single persistent workspace where scratch arrays and factorizations grow up to capacity and are cleared in-place.
 * The snapshot above reaches **50.0 µs per warm-start resolve** on the small sequence with the branchless strategy. Re-run the command above for your machine; this is not a fixed performance guarantee.
@@ -165,13 +165,17 @@ In standard HiGHS C++, calling `highs.run()` or modifying problem bounds trigger
 
 ---
 
-## 🔒 Confidentiality & Anonymization
+## 🔒 Data provenance
 
-All instances in `instances/` (both standalone `.lp` models and warm-start operation logs) are **fully anonymized**:
-* Columns are systematically renamed `c0`, `c1`, `c2`, ...
-* Rows are systematically renamed `r0`, `r1`, `r2`, ...
-* All domain-specific, geographical, corporate, or project names have been completely scrubbed.
-* Git commit history is clean and free of proprietary references.
+The replay corpus under `instances/sequences/` contains sanitized, anonymized
+warm-start operations. Column and row identifiers in those fixtures use neutral
+names (`c0`, `c1`, … and `r0`, `r1`, …); no proprietary source data is required
+to reproduce the published benchmarks.
+
+The models under `instances/netlib/` are the public Netlib test corpus. They are
+kept under their standard public names and are not presented as anonymized or
+proprietary data. All benchmark fixtures shipped in this repository are intended
+to be reproducible public assets.
 
 ---
 

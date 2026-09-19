@@ -1,4 +1,4 @@
-# Warm-Start Sequence Performance in HiGHS: Yggdrasil JLL vs. Native C++ vs. Zero-Allocation Julia (TinyHiGHS)
+# Warm-Start Sequence Performance in HiGHS: Yggdrasil JLL vs. Native C++ vs. TinyHiGHS.jl
 
 **Author**: Laurent Plagne (EDF R&D / LaurentPlagne)  
 **Target**: Oscar Dowson (@odow) & the HiGHS / JuMP Team  
@@ -18,7 +18,7 @@ During this investigation, we observed **two unexpected and substantial performa
    The local `perf/simd-branchless-pivots` build takes **5.41 ms** (71.2 µs / solve), a **3.98x speedup** in this run using the same public C++ API.
 
 2. **The persistent-workspace gap ($\times 1.42$ additional on `sequence_small`)**:
-   The pure Julia port ([TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)), architected with persistent pre-allocated workspaces and **zero heap allocations** (`@allocated == 0`), runs the same 76-solve sequence in **3.80 ms** (50.0 µs / solve) — **5.66x faster than `HiGHS_artifact`** and **1.42x faster than local `HiGHS_branchless`** in this snapshot.
+   The pure Julia port ([TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)), architected with persistent workspaces, runs the same 76-solve sequence in **3.80 ms** (50.0 µs / solve) — **5.66x faster than `HiGHS_artifact`** and **1.42x faster than local `HiGHS_branchless`** in this snapshot. Allocation counts should be re-measured on the target Julia version.
 
 On `sequence_medium` (100 resolves of dimension $1240 \times 1483$), the same
 run measured **160.71 ms** for `TinyHiGHS_branchless`, **222.33 ms** for local
@@ -89,10 +89,10 @@ above intentionally reports only values produced by `bench/bench_3way.jl`.
 In this micro-solve regime (about 50--70 µs per solve in the current
 `sequence_small` snapshot):
 1. **Persistent-workspace hypothesis**: TinyHiGHS keeps its simplex workspaces
-   allocated across resolves; the test suite checks zero allocations on active
-   kernels. The benchmark itself measures end-to-end time only, so it does not
+   allocated across resolves; allocation counts are measured separately with the
+   dedicated allocation probe. The benchmark itself measures end-to-end time only, so it does not
    claim a particular percentage of time spent in `malloc`/`free`.
-2. **Persistent In-Place Workspaces in Julia**: TinyHiGHS pre-allocates all internal simplex structures (`HVector`, `HFactor`, `DualRHS`, `DualRow`) up to capacity at initialization. Between consecutive solves, arrays are cleared or marked with pointer resets **with zero heap allocations** (`@allocated == 0`).
+2. **Persistent In-Place Workspaces in Julia**: TinyHiGHS pre-allocates all internal simplex structures (`HVector`, `HFactor`, `DualRHS`, `DualRow`) up to capacity at initialization. Between consecutive solves, arrays are cleared or marked with pointer resets; the complete replay path remains the source of truth for allocation measurements.
 3. **Full JIT Inlining**: Julia specializes the execution path from model update
    down to hyper-sparse `solveHyper!` for the active host.
 
@@ -104,7 +104,7 @@ We have made the entire benchmarking suite completely standalone and automated.
 
 ### Prerequisites
 - A Mac (Apple Silicon or Intel) or Linux machine.
-- Julia $\ge 1.9$.
+- Julia $\ge 1.10$ (the package compatibility baseline).
 - A standard C++11 compiler (`clang++` or `g++`).
 - A local build of HiGHS (optional: if omitted, the script automatically tests the official artifact against `TinyHiGHS.jl`).
 

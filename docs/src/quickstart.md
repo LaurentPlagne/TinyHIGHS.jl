@@ -120,7 +120,7 @@ println("Optimal value: ", obj)
 
 ---
 
-## High-Performance Warm-Starting (Zero Allocations)
+## High-Performance Warm-Starting
 
 The true power of TinyHiGHS lies in iterative workflows where problem parameters change sequentially:
 
@@ -147,4 +147,7 @@ status = solve!(engine)
 println("Warm solve: obj = ", engine.info.primal_objective_value)
 ```
 
-Because all internal buffers are preallocated to capacity, the call to `solve!(engine)` during warm resolves performs **0 heap allocations**, running at native hardware memory speed.
+Internal buffers are retained across warm resolves. The timing benchmark and the
+allocation probe in `bench/generate_synthetic_sequences.jl` report the observed
+behavior; measure `@allocated solve!(engine)` on the Julia version and workload
+you deploy before relying on a hard allocation budget.

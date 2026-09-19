@@ -68,8 +68,8 @@ function benchmark_tinyhighs(base_lp::String, ops_file::String, strategy::PivotS
 end
 
 function _print_unavailable(label::AbstractString)
-    @printf("%-36s | %12s | %15s | %15s | %12s | %s\n",
-            label, "N/A", "N/A", "N/A", "N/A", "runner indisponible")
+    @printf("%-36s | %12s | %15s | %15s | %10s | %12s | %s\n",
+            label, "N/A", "N/A", "N/A", "N/A", "N/A", "runner indisponible")
 end
 
 function _print_benchmark_row(label::AbstractString, result, reference)
@@ -82,15 +82,34 @@ function _print_benchmark_row(label::AbstractString, result, reference)
         "NONOPT" : reference === nothing ? "n/a" :
         (isapprox(result.obj, reference.obj; rtol=1e-8, atol=1e-8) ? "OK" : "DIFF")
     speedup_text = reference === nothing ? "N/A" : @sprintf("%12.2fx", speedup)
-    @printf("%-36s | %9.2f ms | %9.1f µs/s | %15s | %12.4f | %s\n",
+    @printf("%-36s | %9.2f ms | %9.1f µs/s | %10d | %12s | %12.4f | %s\n",
             label, result.time_ms, (result.time_ms * 1000) / max(result.solves, 1),
-            speedup_text, result.obj, objective_status)
+            result.iters, speedup_text, result.obj, objective_status)
+end
+
+function _git_revision()
+    try
+        return readchomp(`git -C $ROOT_DIR rev-parse --short HEAD`)
+    catch
+        return "unknown"
+    end
+end
+
+function _print_benchmark_metadata()
+    compiler = Sys.which("clang++")
+    println(" Julia version : ", VERSION)
+    println(" CPU           : ", Sys.CPU_NAME)
+    println(" Machine       : ", Sys.MACHINE, " (", Sys.KERNEL, ")")
+    println(" Word size     : ", Sys.WORD_SIZE)
+    println(" Git revision  : ", _git_revision())
+    println(" C++ compiler  : ", compiler === nothing ? "not found" : compiler)
+    println(" C++ runners   : ", BIN_ORIGINAL, " ; ", BIN_LOCAL)
 end
 
 function run_full_3way_benchmark()
     println("="^100)
     println(" BENCHMARK COMPARATIF : HiGHS_artifact vs HiGHS_branchless vs TinyHiGHS")
-    println(" Machine : ", Sys.MACHINE, " (", Sys.KERNEL, ")")
+    _print_benchmark_metadata()
     println(" Baseline C++ non patchée : HiGHS_artifact; le build local est HiGHS_branchless.")
     println("="^100)
     
@@ -122,9 +141,9 @@ function run_full_3way_benchmark()
         # 5. TinyHiGHS (FDIV)
         res_tiny_fd = benchmark_tinyhighs(base_lp, ops_file, kPivotFdiv, reps)
         
-        @printf("\n%-36s | %-12s | %-15s | %-15s | %-12s | %-8s\n",
-                "Moteur / Configuration", "Temps total", "Temps / solve", "Speedup vs Art.", "Objectif", "Statut")
-        println("-"^100)
+        @printf("\n%-36s | %-12s | %-15s | %-10s | %-12s | %-12s | %-8s\n",
+                "Moteur / Configuration", "Temps total", "Temps / solve", "Itérations", "Speedup vs Art.", "Objectif", "Statut")
+        println("-"^120)
 
         _print_benchmark_row("1. HiGHS_artifact (official v1.15)", res_art, nothing)
         _print_benchmark_row("2. HiGHS_branchless (local PR, -O3)", res_loc, res_art)

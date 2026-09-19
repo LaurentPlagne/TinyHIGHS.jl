@@ -67,3 +67,31 @@ end
     @test MOI.get(unbounded, MOI.TerminationStatus()) == MOI.DUAL_INFEASIBLE
     @test MOI.get(unbounded, MOI.ResultCount()) == 0
 end
+
+@testset "MathOptInterface — intervals and objective offsets" begin
+    model = TinyHiGHS.Optimizer()
+
+    x = MOI.add_variable(model)
+    y = MOI.add_variable(model)
+    xeq = MOI.add_constraint(model, x, MOI.EqualTo(1.0))
+    yinterval = MOI.add_constraint(model, y, MOI.Interval(0.0, 2.0))
+    row = MOI.ScalarAffineFunction(
+        [MOI.ScalarAffineTerm(1.0, x), MOI.ScalarAffineTerm(1.0, y)], 0.0)
+    rinterval = MOI.add_constraint(model, row, MOI.Interval(1.0, 2.0))
+    objective = MOI.ScalarAffineFunction(
+        [MOI.ScalarAffineTerm(2.0, x), MOI.ScalarAffineTerm(3.0, y)], 4.5)
+    MOI.set(model, MOI.ObjectiveSense(), MOI.MIN_SENSE)
+    MOI.set(model, MOI.ObjectiveFunction{MOI.ScalarAffineFunction{Float64}}(), objective)
+    MOI.optimize!(model)
+    @test MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+    @test MOI.get(model, MOI.VariablePrimal(), x) ≈ 1.0 atol=1e-9
+    @test MOI.get(model, MOI.VariablePrimal(), y) ≈ 0.0 atol=1e-9
+    @test MOI.get(model, MOI.ConstraintPrimal(), xeq) ≈ 1.0 atol=1e-9
+    @test MOI.get(model, MOI.ConstraintPrimal(), yinterval) ≈ 0.0 atol=1e-9
+    @test MOI.get(model, MOI.ConstraintPrimal(), rinterval) ≈ 1.0 atol=1e-9
+    @test MOI.get(model, MOI.ObjectiveValue()) ≈ 6.5 atol=1e-9
+    @test MOI.get(model, MOI.SolverName()) == "TinyHiGHS"
+    @test MOI.get(model, MOI.SolverVersion()) == string(VERSION)
+    @test MOI.get(model, MOI.SolveTimeSec()) >= 0.0
+    @test MOI.get(model, MOI.SimplexIterations()) >= 0
+end
