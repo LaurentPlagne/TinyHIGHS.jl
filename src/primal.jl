@@ -1,29 +1,29 @@
-# Portage de `simplex/HEkkPrimal.{h,cpp}` (licence MIT, HiGHS) — tranches M4a
-# (phase 2 nue), M4b (phase 1, classification infaisable/non borné) et M4c
-# (poids Devex/steepest edge, rayon primal, reprise après backtracking).
+# Port of `simplex/HEkkPrimal.{h,cpp}` (MIT License, HiGHS) — slices M4a
+# (plain phase 2), M4b (phase 1, infeasible/unbounded classification), and M4c
+# (Devex/steepest edge weights, primal ray, recovery after backtracking).
 #
-# Porté : `initialiseSolve`, `solve` (préambule avec perturbation des bornes,
-# boucle majeure, reprise `kSolvePhaseUnknown` après backtracking),
+# Ported: `initialiseSolve`, `solve` (preamble with bound perturbation,
+# major loop, `kSolvePhaseUnknown` recovery after backtracking),
 # `solvePhase1`, `solvePhase2`, `iterate`, `chuzc`/`chooseColumn`, `useVariableIn`,
 # `phase1ChooseRow`, `chooseRow`, `considerBoundSwap`, `assessPivot`,
 # `updateVerify`, `update`, `updateDual`, `phase1UpdatePrimal`,
 # `basicFeasibilityChange*`, `phase2UpdatePrimal`, `considerInfeasibleValueIn`
-# (deux phases), `adjustPerturbedEquationOut`, `rebuild`, `cleanup`,
+# (both phases), `adjustPerturbedEquationOut`, `rebuild`, `cleanup`,
 # `correctPrimal`, `getBasicPrimalInfeasibility`, `shiftBound`,
 # `getNonbasicFreeColumnSet`, `removeNonbasicFreeColumn`,
 # `initialiseDevexFramework`/`updateDevex`,
 # `computePrimalSteepestEdgeWeights`/`updatePrimalSteepestEdgeWeights`,
-# `updateBtranPSE` et `savePrimalRay` (le rayon n'est pas exporté, §1).
+# `updateBtranPSE`, and `savePrimalRay` (ray export omitted, §1).
 #
-# Non porté : le CHUZC hyper-creux, que la source gelée **désactive** dans les
-# deux branches de `rebuild` (`use_hyper_chuzc = false`), la limite d'objectif
-# et les rapports. Le contrôle `debugPrimalSteepestEdgeWeights` est porté pour
-# ses effets de bord (RNG et FTRAN), sans son rapport. Chaque branche absente
-# lève une erreur explicite plutôt que de dégrader silencieusement.
+# Not ported: hyper-sparse CHUZC, which the frozen source disables in both
+# branches of `rebuild` (`use_hyper_chuzc = false`), objective limit,
+# and reporting. The check `debugPrimalSteepestEdgeWeights` is ported for
+# its side effects (RNG and FTRAN), without reporting. Missing branches
+# throw explicit errors rather than silently degrading.
 #
-# `solve!` suppose l'état frais comme la source : coûts, bornes, valeurs,
-# primal, dual et infaisabilités déjà calculés par l'appelant (`HEkk::solve`
-# ou le nettoyage de `HEkkDual::solve`), et `INVERT` fait.
+# `solve!` assumes fresh state like the HiGHS source: costs, bounds, values,
+# primal, dual, and infeasibilities already computed by caller (`HEkk::solve`
+# or `HEkkDual::solve` cleanup), and `INVERT` performed.
 
 """
     PrimalSolver(engine::SimplexEngine)
@@ -95,7 +95,7 @@ function PrimalSolver(e::SimplexEngine)
         0.0, 0.0, 0.0)
 end
 
-"""`HEkkPrimal::initialiseSolve` — poids Dantzig, Devex ou steepest edge."""
+"""`HEkkPrimal::initialiseSolve` — Dantzig, Devex, or steepest edge weights."""
 function initialise_solve!(p::PrimalSolver)
     e = p.engine
     p.primal_feasibility_tolerance = e.options.primal_feasibility_tolerance
@@ -106,15 +106,15 @@ function initialise_solve!(p::PrimalSolver)
     e.solve_bailout = false
     p.rebuild_reason = kRebuildReasonNo
     if !e.status.has_dual_steepest_edge_weights
-        # Pas de poids DSE duaux à maintenir : la source assigne les vecteurs
-        # (utilisés autour de la factorisation et du backtracking).
+        # No dual DSE weights to maintain: source assigns vectors
+        # (used around factorization and backtracking).
         fill!(e.dual_edge_weight, 1.0)
         resize!(e.scattered_dual_edge_weight, p.solver_num_tot)
     end
     strategy = e.options.simplex_primal_edge_weight_strategy
     if strategy == kSimplexEdgeWeightStrategyChoose ||
        strategy == kSimplexEdgeWeightStrategyDevex
-        # « choose » part en Devex, comme la source.
+        # "choose" defaults to Devex, matching source.
         p.edge_weight_mode = kEdgeWeightDevex
         initialise_devex_framework!(p)
     elseif strategy == kSimplexEdgeWeightStrategyDantzig
@@ -124,15 +124,15 @@ function initialise_solve!(p::PrimalSolver)
         p.edge_weight_mode = kEdgeWeightSteepestEdge
         compute_primal_steepest_edge_weights!(p)
     else
-        error("PrimalSolver : stratégie de poids $strategy inconnue")
+        error("PrimalSolver: unknown edge weight strategy $strategy")
     end
     return p
 end
 
 """
-`HEkkPrimal::initialiseDevexFramework` : poids à 1, ensemble de référence
-`devex_index = nonbasicFlag²` (les non basiques au moment de l'initialisation),
-compteurs remis à zéro.
+`HEkkPrimal::initialiseDevexFramework`: unit weights, reference framework
+`devex_index = nonbasicFlag²` (nonbasics at initialization time),
+counters reset to zero.
 """
 function initialise_devex_framework!(p::PrimalSolver)
     fill!(p.edge_weight, 1.0)
@@ -146,7 +146,7 @@ function initialise_devex_framework!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::updateDevex` — poids Devex après le pivot."""
+"""`HEkkPrimal::updateDevex` — Devex weights after pivot."""
 function update_devex!(p::PrimalSolver)
     e = p.engine
     d_pivot_weight = 0.0
@@ -159,7 +159,7 @@ function update_devex!(p::PrimalSolver)
         d_pivot_weight += d_alpha * d_alpha
     end
     d_pivot_weight += p.devex_index[p.variable_in] * 1.0
-    # Poids aberrant : compté, la source ré-initialise au-delà du seuil.
+    # Outlying weight: counted, source reinitializes above threshold.
     p.edge_weight[p.variable_in] > kBadDevexWeightFactor * d_pivot_weight &&
         (p.num_bad_devex_weight += 1)
     d_pivot = p.col_aq.array[p.row_out]
@@ -184,9 +184,9 @@ function update_devex!(p::PrimalSolver)
 end
 
 """
-`HEkkPrimal::computePrimalSteepestEdgeWeights` : poids exacts. Sur base
-logique, `1 + ‖a_j‖²` (somme dans l'ordre de la colonne) ; sinon un FTRAN par
-variable non basique.
+`HEkkPrimal::computePrimalSteepestEdgeWeights`: exact weights. On logical
+basis, `1 + ‖a_j‖²` (sum in column order); otherwise one FTRAN per
+nonbasic variable.
 """
 function compute_primal_steepest_edge_weights!(p::PrimalSolver)
     e = p.engine
@@ -212,7 +212,7 @@ function compute_primal_steepest_edge_weights!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::computePrimalSteepestEdgeWeight` — un FTRAN de la colonne."""
+"""`HEkkPrimal::computePrimalSteepestEdgeWeight` — column FTRAN."""
 function compute_primal_steepest_edge_weight(p::PrimalSolver, iVar::Int,
     local_col_aq::HVector)
     e = p.engine
@@ -226,9 +226,9 @@ function compute_primal_steepest_edge_weight(p::PrimalSolver, iVar::Int,
 end
 
 """
-`HEkkPrimal::updatePrimalSteepestEdgeWeights` : mise à jour des poids par le
-vecteur `mu = B^{-T} hat{a}_q` (BTRAN PSE), sur les non basiques de la rangée
-pivot (structurales puis logiques).
+`HEkkPrimal::updatePrimalSteepestEdgeWeights`: updates weights using
+vector `mu = B^{-T} hat{a}_q` (BTRAN PSE), on nonbasics of pivot row
+(structurals then slacks).
 """
 function update_primal_steepest_edge_weights!(p::PrimalSolver)
     e = p.engine
@@ -263,8 +263,8 @@ function update_primal_steepest_edge_weights!(p::PrimalSolver)
         p.edge_weight[iVar] < min_weight &&
             (p.edge_weight[iVar] = min_weight)
     end
-    # La colonne tableau de la variable sortante est la colonne pivot divisée
-    # par le pivot, sauf en position pivot (1/pivot).
+    # Outgoing tableau column is pivot column divided by pivot,
+    # except at pivot position (1/pivot).
     p.edge_weight[p.variable_out] =
         (1 + col_aq_squared_2norm) / (p.alpha_col * p.alpha_col)
     p.edge_weight[p.variable_in] = 0.0
@@ -272,11 +272,11 @@ function update_primal_steepest_edge_weights!(p::PrimalSolver)
 end
 
 """
-`HEkkPrimal::debugPrimalSteepestEdgeWeights` — branche « coûteuse » forcée par
-`update` en stratégie steepest edge. La source n'imprime qu'en cas d'erreur,
-mais le contrôle **consomme le RNG** (`integer(num_tot)` jusqu'à un non
-basique) et lance un FTRAN par variable tirée, ce qui met à jour
-`col_aq_density` : ses effets sont donc portés, sans le rapport.
+`HEkkPrimal::debugPrimalSteepestEdgeWeights` — expensive branch triggered by
+`update` in steepest edge strategy. Source only prints on error,
+but check consumes RNG (`integer(num_tot)` until nonbasic) and runs
+one FTRAN per drawn variable, updating `col_aq_density`: its side effects
+are ported, without reporting.
 """
 function check_primal_steepest_edge_weights!(p::PrimalSolver)
     e = p.engine
@@ -285,7 +285,7 @@ function check_primal_steepest_edge_weights!(p::PrimalSolver)
     for _ ∈ 1:num_check_weight
         iVar = 0
         while true
-            # `HighsRandom::integer` est 0-based dans la source.
+            # `HighsRandom::integer` is 0-based in source.
             iVar = integer(e.random, p.solver_num_tot) + 1
             e.basis.nonbasicFlag[iVar] == kNonbasicFlagTrue && break
         end
@@ -294,7 +294,7 @@ function check_primal_steepest_edge_weights!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::updateBtranPSE` — BTRAN du vecteur des poids (densité dédiée)."""
+"""`HEkkPrimal::updateBtranPSE` — BTRAN of weight vector (dedicated density)."""
 function update_btran_pse!(p::PrimalSolver)
     e = p.engine
     btran!(e.nla, p.col_steepest_edge, e.info.col_steepest_edge_density)
@@ -304,7 +304,7 @@ function update_btran_pse!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::getNonbasicFreeColumnSet` — ordre croissant des colonnes."""
+"""`HEkkPrimal::getNonbasicFreeColumnSet` — ascending column order."""
 function get_nonbasic_free_column_set!(p::PrimalSolver)
     p.num_free_col == 0 && return p
     e = p.engine
@@ -322,19 +322,19 @@ end
 """
     solve!(p; force_phase2 = true)
 
-`HEkkPrimal::solve` (M4a). `force_phase2` est `pass_force_phase2` de la
-source : le nettoyage dual l'appelle à `true`. Rend le moteur ; le statut est
-dans `engine.model_status`. Le nettoyage dual qui suit un `OptimalCleanup` est
-câblé ; le rayon primal (non-bornitude) et la phase 1 ne sont pas portés.
+`HEkkPrimal::solve` (M4a). `force_phase2` is `pass_force_phase2` in
+source: dual cleanup calls it with `true`. Returns the engine; status is
+in `engine.model_status`. Dual cleanup following `OptimalCleanup` is
+wired; primal ray (unboundedness) and phase 1 are supported.
 """
 function solve!(p::PrimalSolver; force_phase2::Bool=false, restore::Bool=true)
     e = p.engine
-    # `Highs::run` a rejeté les bornes : le LP est infaisable sans simplexe.
+    # `Highs::run` rejected bounds: LP is infeasible without simplex.
     e.bounds_infeasible && return e
     initialise_solve!(p)
-    e.status.has_invert || error("PrimalSolver : INVERT requis avant solve")
-    # `HEkk::solve` : lève d'éventuels blocages hérités d'un solve précédent et
-    # oublie le rayon d'un solve antérieur.
+    e.status.has_invert || error("PrimalSolver: INVERT required before solve")
+    # `HEkk::solve`: lift blocks inherited from previous solve and
+    # clear ray from earlier solve.
     e.info.allow_bound_perturbation = true
     clear_ray_records!(e)
     get_nonbasic_free_column_set!(p)
@@ -350,8 +350,8 @@ function solve!(p::PrimalSolver; force_phase2::Bool=false, restore::Bool=true)
                    no_simplex_primal_infeasibilities
     perturb_bounds = !near_optimal
     if perturb_bounds && e.info.primal_simplex_bound_perturbation_multiplier != 0
-        # Bornes écartées : valeurs et infaisabilités sont recalculées sur les
-        # bornes perturbées.
+        # Shifted bounds: values and infeasibilities are recomputed on
+        # perturbed bounds.
         initialise_bound!(e, kPrimal, kSolvePhaseUnknown; perturb=true)
         initialise_nonbasic_value_and_move!(e)
         compute_primal!(e)
@@ -369,9 +369,8 @@ function solve!(p::PrimalSolver; force_phase2::Bool=false, restore::Bool=true)
         it0 = e.iteration_count
         e.status.has_primal_objective_value = false
         if p.solve_phase == kSolvePhaseUnknown
-            # Reprise après backtracking : le nombre d'infaisabilités primales
-            # redonne la phase, et les coûts/valeurs de la base restaurée sont
-            # remis en place.
+            # Recovery after backtracking: primal infeasibility count
+            # yields phase, and costs/values of restored basis are reset.
             compute_simplex_primal_infeasible!(e)
             p.solve_phase = e.info.num_primal_infeasibilities > 0 ?
                             kSolvePhase1 : kSolvePhase2
@@ -406,17 +405,17 @@ function solve!(p::PrimalSolver; force_phase2::Bool=false, restore::Bool=true)
             e.model_status = kSolveError
             return e
         end
-        # `solvePhase1` qui a nettoyé les bornes reste en phase 1 : la boucle
-        # majeure reprend. `solvePhase2` peut renvoyer en phase 1 après un
-        # nettoyage. La source sort sur optimal, exit et nettoyage dual.
+        # `solvePhase1` that cleaned up bounds stays in phase 1: major loop
+        # continues. `solvePhase2` can return to phase 1 after cleanup.
+        # Source exits on optimal, exit, and dual cleanup.
         (p.solve_phase == kSolvePhaseOptimal ||
          p.solve_phase == kSolvePhaseExit ||
          p.solve_phase == kSolvePhaseOptimalCleanup) && break
     end
     p.solve_phase == kSolvePhaseOptimal && (e.model_status = kOptimal)
     if p.solve_phase == kSolvePhaseOptimalCleanup
-        # Infaisabilités primales après phase 2 : dual faisable, donc le dual
-        # nettoie (sans perturbation de coûts, stratégie duale nue).
+        # Primal infeasibilities after phase 2: dual feasible, so dual
+        # cleans up (without cost perturbation, plain dual strategy).
         compute_primal_objective_value!(e)
         save_cost_perturbation =
             e.info.dual_simplex_cost_perturbation_multiplier
@@ -424,8 +423,8 @@ function solve!(p::PrimalSolver; force_phase2::Bool=false, restore::Bool=true)
         save_strategy = e.info.simplex_strategy
         e.info.simplex_strategy = kSimplexStrategyDualPlain
         d = DualSolver(e)
-        # La classification `kUnboundedOrInfeasible` appartient à `HEkk::solve`,
-        # pas à l'appel imbriqué du nettoyage ; les échelles aussi.
+        # The `kUnboundedOrInfeasible` classification belongs to `HEkk::solve`,
+        # not the nested cleanup call; scales as well.
         solve!(d; force_phase2=true, classify=false, restore=false)
         e.info.dual_simplex_cost_perturbation_multiplier =
             save_cost_perturbation
@@ -439,9 +438,9 @@ end
 """
     solve_phase1!(p)
 
-`HEkkPrimal::solvePhase1` : boucle rebuild/itérations en phase 1. Rend la main
-sur phase 2 (plus d'infaisabilité), sur infaisabilité prouvée
-(`kInfeasible`), ou après un `cleanup` qui laisse la phase 1 à reprendre.
+`HEkkPrimal::solvePhase1`: rebuild/iteration loop in phase 1. Yields on
+phase 2 (no more infeasibilities), on proven infeasibility (`kInfeasible`),
+or after a `cleanup` that leaves phase 1 to resume.
 """
 function solve_phase1!(p::PrimalSolver)
     e = p.engine
@@ -454,14 +453,14 @@ function solve_phase1!(p::PrimalSolver)
         p.solve_phase == kSolvePhaseError && return p
         p.solve_phase == kSolvePhaseUnknown && return p
         bailout!(e) && return p
-        # `rebuild!` a trouvé une base primalement faisable : retour phase 2.
+        # `rebuild!` found a primally feasible basis: return to phase 2.
         p.solve_phase == kSolvePhase2 && break
         while true
             iterate!(p)
             bailout!(e) && return p
             p.solve_phase == kSolvePhaseError && return p
             p.solve_phase == kSolvePhase1 || error(
-                "PrimalSolver : phase $(p.solve_phase) après itération (phase 1)")
+                "PrimalSolver: phase $(p.solve_phase) after iteration (phase 1)")
             p.rebuild_reason != kRebuildReasonNo && break
         end
         finished = e.status.has_fresh_rebuild && p.num_flip_since_rebuild == 0 &&
@@ -473,8 +472,8 @@ function solve_phase1!(p::PrimalSolver)
         finished && break
     end
     if p.solve_phase == kSolvePhase1 && p.variable_in < 0
-        # Optimal en phase 1 : soit des bornes écartées cachaient la
-        # faisabilité (nettoyage et reprise), soit l'infaisabilité est prouvée.
+        # Optimal in phase 1: either shifted bounds hid feasibility
+        # (cleanup and retry), or infeasibility is proven.
         if e.info.bounds_shifted || e.info.bounds_perturbed
             cleanup!(p)
         else
@@ -497,31 +496,29 @@ function solve_phase2!(p::PrimalSolver)
         put_backtracking_basis!(e)
     end
     while true
-        # rebuild! : singularité, ou retour en phase 1, ou sortie.
+        # rebuild!: singularity, or return to phase 1, or exit.
         rebuild!(p)
         p.solve_phase == kSolvePhaseError && return p
-        # Backtracking : la boucle majeure reprend la main et rétablit la phase
+        # Backtracking: major loop resumes control and resets phase
         # (`kSolvePhaseUnknown`).
         p.solve_phase == kSolvePhaseUnknown && return p
         bailout!(e) && return p
-        # `rebuild!` a trouvé une infaisabilité primale : retour en phase 1, la
-        # boucle majeure reprend.
+        # `rebuild!` found a primal infeasibility: return to phase 1,
+        # major loop resumes.
         p.solve_phase == kSolvePhase1 && break
         while true
             iterate!(p)
             bailout!(e) && return p
             p.solve_phase == kSolvePhaseError && return p
             p.solve_phase == kSolvePhase2 || error(
-                "PrimalSolver : phase $(p.solve_phase) après itération")
+                "PrimalSolver: phase $(p.solve_phase) after iteration")
             p.rebuild_reason != kRebuildReasonNo && break
         end
-        # Données fraîches de rebuild et aucun flip : regarder ce qui s'est
-        # passé avant de boucler.
+        # Fresh rebuild data and no flips: evaluate outcome before looping.
         finished = e.status.has_fresh_rebuild && p.num_flip_since_rebuild == 0 &&
                    !rebuild_refactor(e, p.rebuild_reason)
         if finished && taboo_bad_basis_change(e)
-            # Seul changement de base possible mais interdit : impossible de
-            # conclure.
+            # Only possible basis change is taboo: cannot conclude.
             p.solve_phase = kSolvePhaseTabooBasis
             return p
         end
@@ -529,7 +526,7 @@ function solve_phase2!(p::PrimalSolver)
     end
     p.solve_phase == kSolvePhase1 && return p
     if p.variable_in == -1
-        # Aucun candidat CHUZC même après rebuild : probablement optimal.
+        # No CHUZC candidate even after rebuild: likely optimal.
         cleanup!(p)
         if e.info.num_primal_infeasibilities > 0
             p.solve_phase = kSolvePhaseOptimalCleanup
@@ -539,20 +536,19 @@ function solve_phase2!(p::PrimalSolver)
             compute_dual_objective_value!(e)
         end
     elseif p.row_out == kNoRowSought
-        # CHUZR n'a pas eu lieu (coût réduit recalculé non attractif, sans
-        # rebuild) : cas rare que la source ne traite pas non plus.
-        error("PrimalSolver : row_out = kNoRowSought (cas rare non porté)")
+        # CHUZR did not occur (recomputed reduced cost unpromising,
+        # without rebuild): rare case unhandled by source as well.
+        error("PrimalSolver: row_out = kNoRowSought (rare case not ported)")
     else
-        # Aucun candidat CHUZR : primal non borné, ou retour en phase 1 après
-        # nettoyage.
+        # No CHUZR candidate: primal unbounded, or return to phase 1 after cleanup.
         if e.info.bounds_shifted || e.info.bounds_perturbed
             cleanup!(p)
             if e.info.num_primal_infeasibilities > 0
                 p.solve_phase = kSolvePhase1
             end
         else
-            # Non-bornitude certifiée : le rayon primal est enregistré (variable
-            # entrante et signe), puis le statut est posé.
+            # Certified unbounded: primal ray is recorded (incoming
+            # variable and sign), then status is set.
             p.solve_phase = kSolvePhaseExit
             save_primal_ray!(p)
             e.model_status = kUnbounded
@@ -574,7 +570,7 @@ function iterate!(p::PrimalSolver)
     if p.solve_phase == kSolvePhase1
         phase1_choose_row!(p)
         if p.row_out == kNoRowChosen
-            # Aucun candidat de pivot en phase 1 : erreur, comme la source.
+            # No pivot candidate in phase 1: error, matching source.
             p.solve_phase = kSolvePhaseError
             return p
         end
@@ -591,8 +587,7 @@ function iterate!(p::PrimalSolver)
         p.rebuild_reason) && return p
     update!(p)
     if e.info.num_primal_infeasibilities == 0 && p.solve_phase == kSolvePhase1
-        # Plus d'infaisabilité en phase 1 : forcer le rebuild qui basculera en
-        # phase 2.
+        # No more infeasibilities in phase 1: force rebuild to switch to phase 2.
         p.rebuild_reason = kRebuildReasonPossiblyPhase1Feasible
     end
     ok_rebuild_reason =
@@ -602,11 +597,11 @@ function iterate!(p::PrimalSolver)
         p.rebuild_reason == kRebuildReasonSyntheticClockSaysInvert ||
         p.rebuild_reason == kRebuildReasonUpdateLimitReached
     ok_rebuild_reason ||
-        error("PrimalSolver : rebuild_reason $(p.rebuild_reason) inattendu")
+        error("PrimalSolver: unexpected rebuild_reason $(p.rebuild_reason)")
     return p
 end
 
-"""`HEkkPrimal::chuzc` — masque les tabous, choisit la colonne entrante."""
+"""`HEkkPrimal::chuzc` — mask taboos, choose incoming column."""
 function chuzc!(p::PrimalSolver)
     e = p.engine
     work_dual = e.info.workDual
@@ -616,13 +611,13 @@ function chuzc!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::chooseColumn` (Dantzig, sans hyper-creux)."""
+"""`HEkkPrimal::chooseColumn` (Dantzig, non-hyper-sparse)."""
 function choose_column!(p::PrimalSolver)
     e = p.engine
     work_dual = e.info.workDual
     best_measure = 0.0
     p.variable_in = -1
-    # Colonnes libres non basiques d'abord.
+    # Nonbasic free columns first.
     for iCol ∈ p.nonbasic_free_col_set
         dual_infeasibility = abs(work_dual[iCol])
         if dual_infeasibility > p.dual_feasibility_tolerance &&
@@ -642,7 +637,7 @@ function choose_column!(p::PrimalSolver)
     return p
 end
 
-"""`HEkk::pivotColumnFtran` — colonne pivot par FTRAN."""
+"""`HEkk::pivotColumnFtran` — pivot column via FTRAN."""
 function pivot_column_ftran!(p::PrimalSolver, iCol::Int, col_aq::HVector)
     e = p.engine
     clear!(col_aq)
@@ -654,7 +649,7 @@ function pivot_column_ftran!(p::PrimalSolver, iCol::Int, col_aq::HVector)
     return p
 end
 
-"""`HEkk::computeDualForTableauColumn` — dual recalculé de la colonne entrante."""
+"""`HEkk::computeDualForTableauColumn` — recomputed dual of incoming column."""
 function compute_dual_for_tableau_column(p::PrimalSolver, iVar::Int,
     tableau_column::HVector)
     e = p.engine
@@ -667,7 +662,7 @@ function compute_dual_for_tableau_column(p::PrimalSolver, iVar::Int,
     return dual
 end
 
-"""`HEkkPrimal::useVariableIn` — FTRAN puis contrôle du dual recalculé."""
+"""`HEkkPrimal::useVariableIn` — FTRAN then check recomputed dual."""
 function use_variable_in!(p::PrimalSolver)
     e = p.engine
     info = e.info
@@ -675,7 +670,7 @@ function use_variable_in!(p::PrimalSolver)
     p.move_in = updated_theta_dual > 0 ? -1 : 1
     move = e.basis.nonbasicMove[p.variable_in]
     if move != 0 && move != p.move_in
-        error("PrimalSolver : move_in incompatible avec nonbasicMove")
+        error("PrimalSolver: move_in incompatible with nonbasicMove")
     end
     pivot_column_ftran!(p, p.variable_in, p.col_aq)
     computed_theta_dual =
@@ -694,14 +689,14 @@ function use_variable_in!(p::PrimalSolver)
     return true
 end
 
-"""`HEkkPrimal::chooseRow` — ratio test (passes 1 et 2)."""
+"""`HEkkPrimal::chooseRow` — ratio test (passes 1 and 2)."""
 function choose_row!(p::PrimalSolver)
     e = p.engine
     info = e.info
     p.row_out = kNoRowChosen
     alpha_tol = info.update_count < 10 ? 1e-9 :
                 info.update_count < 20 ? 1e-8 : 1e-7
-    # Passe 1 : plus petit theta relâché (tolérance d'infaisabilité).
+    # Pass 1: smallest relaxed theta (infeasibility tolerance).
     relax_theta = 1e100
     for i ∈ 1:p.col_aq.count
         iRow = p.col_aq.index[i]
@@ -720,7 +715,7 @@ function choose_row!(p::PrimalSolver)
             end
         end
     end
-    # Passe 2 : plus grand |alpha| parmi les lignes à theta relâché.
+    # Pass 2: largest |alpha| among rows at relaxed theta.
     best_alpha = 0.0
     for i ∈ 1:p.col_aq.count
         iRow = p.col_aq.index[i]
@@ -745,17 +740,16 @@ end
 """
     phase1_choose_row!(p)
 
-`HEkkPrimal::phase1ChooseRow` : ratio test de phase 1. Les candidats sont les
-thetas où la pente de l'infaisabilité primale change (`ph1_sorter_r`, theta
-relâché par la tolérance) et ceux où une infaisabilité est résorbée ou créée
-(`ph1_sorter_t`, theta serré). Le theta retenu est le dernier avant que la
-pente ne devienne négative ; le pivot est le plus grand `|alpha|` parmi les
-candidats serrés sous ce theta, à 10 % du maximum.
+`HEkkPrimal::phase1ChooseRow`: phase 1 ratio test. Candidates are thetas
+where the slope of primal infeasibility changes (`ph1_sorter_r`, theta
+relaxed by tolerance) and those where an infeasibility is resolved or created
+(`ph1_sorter_t`, tight theta). Selected theta is the last one before slope
+becomes negative; pivot is largest `|alpha|` among tight candidates below this
+theta, within 10% of maximum.
 
-Le marqueur signé reprend le couple C++ `(theta, iRow)`, `(theta, iRow - m)` :
-positif = candidat de la borne supérieure, négatif = borne inférieure, encodé
-`iRow - m - 1` en 1-based pour que l'ordre de tri (et les égalités) soit
-identique à la source.
+The signed marker matches C++ `(theta, iRow)`, `(theta, iRow - m)`:
+positive = upper bound candidate, negative = lower bound, encoded as
+`iRow - m - 1` in 1-based indexing so sort order and ties match the source.
 """
 function phase1_choose_row!(p::PrimalSolver)
     e = p.engine
@@ -768,10 +762,10 @@ function phase1_choose_row!(p::PrimalSolver)
         iRow = p.col_aq.index[i]
         alpha = p.col_aq.array[iRow] * p.move_in
         if alpha > alpha_tol
-            # La variable de base décroît.
+            # Basic variable decreases.
             if info.baseValue[iRow] >
                info.baseUpper[iRow] + p.primal_feasibility_tolerance
-                # Elle devient faisable en atteignant sa borne supérieure.
+                # Becomes feasible on reaching its upper bound.
                 feas_theta = (info.baseValue[iRow] - info.baseUpper[iRow] -
                               p.primal_feasibility_tolerance) / alpha
                 push!(p.ph1_sorter_r, (feas_theta, iRow))
@@ -780,7 +774,7 @@ function phase1_choose_row!(p::PrimalSolver)
             if info.baseValue[iRow] >
                info.baseLower[iRow] - p.primal_feasibility_tolerance &&
                info.baseLower[iRow] > -kHighsInf
-                # Elle redevient infaisable en passant sous sa borne inférieure.
+                # Becomes infeasible again on falling below its lower bound.
                 relax_theta = (info.baseValue[iRow] - info.baseLower[iRow] +
                                p.primal_feasibility_tolerance) / alpha
                 tight_theta = (info.baseValue[iRow] - info.baseLower[iRow]) / alpha
@@ -791,7 +785,7 @@ function phase1_choose_row!(p::PrimalSolver)
             end
         end
         if alpha < -alpha_tol
-            # La variable de base croît.
+            # Basic variable increases.
             if info.baseValue[iRow] <
                info.baseLower[iRow] - p.primal_feasibility_tolerance
                 feas_theta = (info.baseValue[iRow] - info.baseLower[iRow] +
@@ -828,8 +822,8 @@ function phase1_choose_row!(p::PrimalSolver)
     end
     sort!(p.ph1_sorter_t)
     max_alpha = 0.0
-    # `i_last` est l'indice (1-based) du premier theta trop grand ; il est
-    # exclu du parcours arrière, comme le `iLast` 0-based de la source.
+    # `i_last` is 1-based index of first theta that is too large;
+    # excluded from backward pass, matching 0-based `iLast` in source.
     i_last = length(p.ph1_sorter_t) + 1
     for i ∈ 1:length(p.ph1_sorter_t)
         my_theta, marker = p.ph1_sorter_t[i]
@@ -856,19 +850,19 @@ function phase1_choose_row!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::considerBoundSwap` — theta primal, flip ou pivot."""
+"""`HEkkPrimal::considerBoundSwap` — primal theta, flip, or pivot."""
 function consider_bound_swap!(p::PrimalSolver)
     e = p.engine
     info = e.info
     if p.row_out == kNoRowChosen
-        # Aucune ligne bloquante : flip ou non borné.
+        # No blocking row: flip or unbounded.
         p.theta_primal = p.move_in * kHighsInf
         p.move_out = 0
     else
         p.alpha_col = p.col_aq.array[p.row_out]
-        # En phase 1, `move_out` vient de `phase1ChooseRow` : la variable
-        # sortante peut devenir faisable (vers sa borne) ou le rester, la
-        # direction n'est pas déductible du signe du pivot.
+        # In phase 1, `move_out` comes from `phase1ChooseRow`: outgoing variable
+        # may become feasible (toward its bound) or remain so; direction is not
+        # deducible from pivot sign.
         p.solve_phase == kSolvePhase2 &&
             (p.move_out = p.alpha_col * p.move_in > 0 ? -1 : 1)
         p.theta_primal = p.move_out == 1 ?
@@ -897,14 +891,14 @@ function consider_bound_swap!(p::PrimalSolver)
         end
     end
     if p.solve_phase == kSolvePhase2 && !(p.row_out >= 0 || flipped)
-        # Non-bornitude possible : en phase 1, row_out >= 0 est garanti (son
-        # absence est traitée comme une erreur dans `iterate!`).
+        # Possible unboundedness: in phase 1, row_out >= 0 is guaranteed
+        # (its absence is treated as an error in `iterate!`).
         p.rebuild_reason = kRebuildReasonPossiblyPrimalUnbounded
     end
     return p
 end
 
-"""`HEkk::unitBtran` — BTRAN du vecteur unité e_row_out."""
+"""`HEkk::unitBtran` — BTRAN of unit vector e_row_out."""
 function unit_btran!(p::PrimalSolver, iRow::Int, row_ep::HVector)
     e = p.engine
     clear!(row_ep)
@@ -918,7 +912,7 @@ function unit_btran!(p::PrimalSolver, iRow::Int, row_ep::HVector)
     return p
 end
 
-"""`HEkkPrimal::assessPivot` — BTRAN unitaire, PRICE, contrôle numérique."""
+"""`HEkkPrimal::assessPivot` — unit BTRAN, PRICE, numerical checks."""
 function assess_pivot!(p::PrimalSolver)
     e = p.engine
     p.alpha_col = p.col_aq.array[p.row_out]
@@ -929,7 +923,7 @@ function assess_pivot!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::updateVerify` — pivot colonne contre pivot rangée."""
+"""`HEkkPrimal::updateVerify` — column pivot vs row pivot."""
 function update_verify!(p::PrimalSolver)
     e = p.engine
     p.numerical_trouble = 0.0
@@ -947,7 +941,7 @@ function update_verify!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::adjustPerturbedEquationOut` — sortie d'une variable fixe."""
+"""`HEkkPrimal::adjustPerturbedEquationOut` — fixed variable leaves basis."""
 function adjust_perturbed_equation_out!(p::PrimalSolver)
     e = p.engine
     info = e.info
@@ -962,7 +956,7 @@ function adjust_perturbed_equation_out!(p::PrimalSolver)
         lp_upper = -lp.row_lower[iRow]
     end
     lp_lower < lp_upper && return p
-    # La variable sortante est fixe : theta primal rectifié sur sa vraie valeur.
+    # Outgoing variable is fixed: primal theta rectified to its true value.
     true_fixed_value = lp_lower
     p.theta_primal =
         (info.baseValue[p.row_out] - true_fixed_value) / p.alpha_col
@@ -973,7 +967,7 @@ function adjust_perturbed_equation_out!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::update` — mise à jour primale, duale, facteur et pivots."""
+"""`HEkkPrimal::update` — primal, dual, factor, and pivot updates."""
 function update!(p::PrimalSolver)
     e = p.engine
     info = e.info
@@ -984,14 +978,14 @@ function update!(p::PrimalSolver)
         p.numerical_trouble = 0.0
         info.workValue[p.variable_in] = p.value_in
         e.basis.nonbasicMove[p.variable_in] == p.move_in ||
-            error("PrimalSolver : flip incohérent")
+            error("PrimalSolver: inconsistent flip")
         e.basis.nonbasicMove[p.variable_in] = -p.move_in
     else
         adjust_perturbed_equation_out!(p)
     end
-    # Copie de l'ordre de la source : mise à jour primale, puis duale. En phase
-    # 1, les duals sont corrigés des changements de faisabilité (le CHUZC
-    # hyper-creux, non porté, s'insère ici).
+    # Matching source order: primal update, then dual. In phase 1,
+    # duals are adjusted for feasibility changes (hyper-sparse CHUZC,
+    # not ported, inserts here).
     if p.solve_phase == kSolvePhase1
         phase1_update_primal!(p)
         basic_feasibility_change_update_dual!(p)
@@ -1012,15 +1006,15 @@ function update!(p::PrimalSolver)
     if p.edge_weight_mode == kEdgeWeightDevex
         update_devex!(p)
     elseif p.edge_weight_mode == kEdgeWeightSteepestEdge
-        # Le contrôle « coûteux » de la source (avant mise à jour) est porté
-        # pour ses effets de bord : tirages du RNG et FTRAN de contrôle.
+        # The expensive check in source (before update) is ported
+        # for its side effects: RNG draws and verification FTRAN.
         check_primal_steepest_edge_weights!(p)
         update_primal_steepest_edge_weights!(p)
     end
     remove_nonbasic_free_column!(p)
     if e.status.has_dual_steepest_edge_weights
-        # Le primal doit maintenir les poids DSE duaux : le dual peut reprendre
-        # la main (nettoyage `OptimalCleanup`) et les utiliser.
+        # Primal must maintain dual DSE weights: dual can resume
+        # control (during `OptimalCleanup`) and use them.
         update_dual_steepest_edge_weights!(p)
     end
     transform_for_update!(e.nla, p.col_aq, p.row_ep, p.variable_in, p.row_out)
@@ -1033,7 +1027,7 @@ function update!(p::PrimalSolver)
     info.update_count >= info.update_limit &&
         (p.rebuild_reason = kRebuildReasonUpdateLimitReached)
     e.iteration_count += 1
-    # Trop de poids Devex aberrants : ré-initialiser l'ensemble de référence.
+    # Too many outlying Devex weights: reinitialize reference framework.
     p.edge_weight_mode == kEdgeWeightDevex &&
         p.num_bad_devex_weight > kAllowedNumBadDevexWeight &&
         initialise_devex_framework!(p)
@@ -1042,7 +1036,7 @@ function update!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::updateDual` — duals après le pas de primal simplex."""
+"""`HEkkPrimal::updateDual` — duals after primal simplex step."""
 function update_dual!(p::PrimalSolver)
     e = p.engine
     info = e.info
@@ -1066,10 +1060,10 @@ end
 """
     phase1_compute_dual!(p)
 
-`HEkkPrimal::phase1ComputeDual` : coûts et duals de phase 1. `workCost` vaut
-`±1` sur les variables de base infaisables (écarté par le multiplicateur de
-perturbation de phase 1, fixé à 1), puis `workDual = -[A I]' B^{-T} workCost`
-restreint aux non basiques — un BTRAN et un PRICE complets.
+`HEkkPrimal::phase1ComputeDual`: phase 1 costs and duals. `workCost` is
+`±1` on infeasible basic variables (scaled by phase 1 perturbation
+multiplier, set to 1), then `workDual = -[A I]' B^{-T} workCost` restricted
+to nonbasics — a full BTRAN and full PRICE.
 """
 function phase1_compute_dual!(p::PrimalSolver)
     e = p.engine
@@ -1093,7 +1087,7 @@ function phase1_compute_dual!(p::PrimalSolver)
         buffer.index[buffer.count] = iRow
     end
     buffer.count > 0 ||
-        error("PrimalSolver : phase 1 sans infaisabilité (second membre nul)")
+        error("PrimalSolver: phase 1 without infeasibility (zero RHS)")
     for iRow ∈ 1:p.solver_num_row
         info.workCost[e.basis.basicIndex[iRow]] = buffer.array[iRow]
     end
@@ -1112,9 +1106,8 @@ function phase1_compute_dual!(p::PrimalSolver)
 end
 
 """
-`HEkkPrimal::phase1UpdatePrimal` — valeurs de base et coûts de phase 1 ; les
-changements de coût des basiques sont collectés dans
-`col_basic_feasibility_change` pour la correction des duals.
+`HEkkPrimal::phase1UpdatePrimal` — base values and phase 1 costs; basic cost
+changes are collected in `col_basic_feasibility_change` for dual correction.
 """
 function phase1_update_primal!(p::PrimalSolver)
     e = p.engine
@@ -1131,7 +1124,7 @@ function phase1_update_primal!(p::PrimalSolver)
         lower = info.baseLower[iRow]
         upper = info.baseUpper[iRow]
         bound_violated = value < lower - p.primal_feasibility_tolerance ? -1 :
-                         value > upper + p.primal_feasibility_tolerance ? 1 : 0
+                          value > upper + p.primal_feasibility_tolerance ? 1 : 0
         cost = Float64(bound_violated)
         base != 0.0 && (cost *= 1 + base * info.numTotRandomValue[iRow])
         info.workCost[iCol] = cost
@@ -1145,8 +1138,8 @@ function phase1_update_primal!(p::PrimalSolver)
             change.array[iRow] = delta_cost
             change.count += 1
             change.index[change.count] = iRow
-            # Les coûts des logiques n'ont pas de composante dans le PRICE :
-            # leur delta est appliqué au dual directement.
+            # Slack costs have no component in PRICE: their delta is
+            # applied directly to the dual.
             iCol > p.solver_num_col && (info.workDual[iCol] += delta_cost)
         end
     end
@@ -1155,10 +1148,9 @@ function phase1_update_primal!(p::PrimalSolver)
 end
 
 """
-`HEkkPrimal::basicFeasibilityChangeUpdateDual` : BTRAN du vecteur des
-changements de coût des basiques, PRICE sur les non basiques, puis soustraction
-des composantes — les logiques reçoivent le vecteur BTRAN (leur coût est
-exactement la variable logique).
+`HEkkPrimal::basicFeasibilityChangeUpdateDual`: BTRAN of basic cost change
+vector, PRICE on nonbasics, then component subtraction — slacks receive
+the BTRAN vector (their column is the identity).
 """
 function basic_feasibility_change_update_dual!(p::PrimalSolver)
     e = p.engine
@@ -1184,7 +1176,7 @@ function basic_feasibility_change_update_dual!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::basicFeasibilityChangeBtran` — BTRAN du vecteur de changement."""
+"""`HEkkPrimal::basicFeasibilityChangeBtran` — BTRAN of change vector."""
 function basic_feasibility_change_btran!(p::PrimalSolver)
     e = p.engine
     btran!(e.nla, p.col_basic_feasibility_change,
@@ -1195,7 +1187,7 @@ function basic_feasibility_change_btran!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::basicFeasibilityChangePrice` — PRICE du vecteur de changement."""
+"""`HEkkPrimal::basicFeasibilityChangePrice` — PRICE of change vector."""
 function basic_feasibility_change_price!(p::PrimalSolver)
     e = p.engine
     local_density = p.col_basic_feasibility_change.count / p.solver_num_row
@@ -1205,8 +1197,8 @@ function basic_feasibility_change_price!(p::PrimalSolver)
     if use_col_price
         price_by_column!(e.lp.a_matrix, p.row_basic_feasibility_change,
             p.col_basic_feasibility_change)
-        # Le PRICE colonne couvre aussi les basiques : les annuler via le
-        # masque non basique.
+        # Column PRICE also covers basic variables: zero them out via
+        # nonbasic mask.
         for iCol ∈ 1:p.solver_num_col
             p.row_basic_feasibility_change.array[iCol] *=
                 e.basis.nonbasicFlag[iCol]
@@ -1226,8 +1218,8 @@ function basic_feasibility_change_price!(p::PrimalSolver)
 end
 
 """
-`HEkkPrimal::phase2UpdatePrimal` — valeurs de base, infaisabilités traitées par
-shift de bornes (stratégie `Always` de la source), objectif mis à jour.
+`HEkkPrimal::phase2UpdatePrimal` — basic values, infeasibilities handled by
+bound shifting (HiGHS `Always` strategy), objective updated.
 """
 function phase2_update_primal!(p::PrimalSolver, initialise::Bool)
     e = p.engine
@@ -1249,7 +1241,7 @@ function phase2_update_primal!(p::PrimalSolver, initialise::Bool)
                          value > upper + p.primal_feasibility_tolerance ? 1 :
                          0
         bound_violated == 0 && continue
-        # Stratégie `Always` : le dépassement est absorbé par un shift de borne.
+        # Always strategy: violation is absorbed by bound shift.
         iCol = e.basis.basicIndex[iRow]
         if bound_violated > 0
             bound, shift = shift_bound!(p, false, iCol, value,
@@ -1271,7 +1263,7 @@ function phase2_update_primal!(p::PrimalSolver, initialise::Bool)
     return p
 end
 
-"""`HEkkPrimal::considerInfeasibleValueIn` — valeur entrante infaisable."""
+"""`HEkkPrimal::considerInfeasibleValueIn` — infeasible incoming value."""
 function consider_infeasible_value_in!(p::PrimalSolver)
     e = p.engine
     info = e.info
@@ -1282,8 +1274,8 @@ function consider_infeasible_value_in!(p::PrimalSolver)
         p.value_in > upper + p.primal_feasibility_tolerance ? 1 : 0
     bound_violated == 0 && return p
     if p.solve_phase == kSolvePhase1
-        # Phase 1 : la valeur entrante infaisable devient un coût de base
-        # (perturbé par le multiplicateur de phase 1) et bascule le dual.
+        # Phase 1: infeasible incoming value becomes a basic cost
+        # (perturbed by phase 1 multiplier) and shifts the dual.
         info.num_primal_infeasibilities += 1
         base = info.primal_simplex_phase1_cost_perturbation_multiplier * 5e-7
         cost = Float64(bound_violated)
@@ -1293,7 +1285,7 @@ function consider_infeasible_value_in!(p::PrimalSolver)
         invalidate_primal_max_sum_infeasibility_record!(e)
         return p
     end
-    # Phase 2, stratégie `Always` : shift de borne.
+    # Phase 2, Always strategy: bound shift.
     if bound_violated > 0
         bound, shift = shift_bound!(p, false, p.variable_in, p.value_in,
             info.numTotRandomValue[p.variable_in])
@@ -1310,32 +1302,31 @@ function consider_infeasible_value_in!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::removeNonbasicFreeColumn` — la colonne entrante devient basique."""
+"""`HEkkPrimal::removeNonbasicFreeColumn` — incoming column becomes basic."""
 function remove_nonbasic_free_column!(p::PrimalSolver)
     e = p.engine
     e.basis.nonbasicMove[p.variable_in] == 0 || return p
     idx = findfirst(==(p.variable_in), p.nonbasic_free_col_set)
     idx === nothing &&
-        error("PrimalSolver : colonne libre non basique absente de l'ensemble")
+        error("PrimalSolver: nonbasic free column absent from set")
     deleteat!(p.nonbasic_free_col_set, idx)
     return p
 end
 
 """
-`HEkkPrimal::updateDualSteepestEdgeWeights` — maintien des poids DSE duaux
-pendant une phase primale (le dual peut reprendre la main au nettoyage).
+`HEkkPrimal::updateDualSteepestEdgeWeights` — maintain dual DSE weights
+during primal phase (dual can resume control during cleanup).
 """
 function update_dual_steepest_edge_weights!(p::PrimalSolver)
     e = p.engine
     copy!(p.col_steepest_edge, p.row_ep)
-    # `updateFtranDSE` : retrait de l'échelle de ligne puis FTRAN en espace
-    # échelonné.
+    # `updateFtranDSE`: unapply row scale then FTRAN in scaled space.
     unapply_basis_matrix_row_scale!(e.nla, p.col_steepest_edge)
     ftran_in_scaled_space!(e.nla, p.col_steepest_edge, e.info.row_DSE_density)
     e.info.row_DSE_density = update_operation_result_density(
         e.info.row_DSE_density, p.col_steepest_edge.count * p.inv_solver_num_row)
     edge_weight = e.dual_edge_weight
-    # `simplex_in_scaled_space_` : norme de `row_ep` directement.
+    # simplex_in_scaled_space_: norm of row_ep directly.
     edge_weight[p.row_out] = e.lp.is_scaled ? norm2(p.row_ep) :
                              row_ep_2norm_in_scaled_space(e.nla, p.row_out,
                                  p.row_ep)
@@ -1350,19 +1341,19 @@ function update_dual_steepest_edge_weights!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::shiftBound` — borne et décalage pour rendre `value` faisable."""
+"""`HEkkPrimal::shiftBound` — bound and shift to make value feasible."""
 function shift_bound!(p::PrimalSolver, lower::Bool, iVar::Int,
     value::Float64, random_value::Float64)
     feasibility = (1 + random_value) * p.primal_feasibility_tolerance
     if lower
         value < p.engine.info.workLower[iVar] - p.primal_feasibility_tolerance ||
-            error("PrimalSolver : shiftBound lower sans violation")
+            error("PrimalSolver: shiftBound lower without violation")
         infeasibility = p.engine.info.workLower[iVar] - value
         shift = infeasibility + feasibility
         bound = p.engine.info.workLower[iVar] - shift
     else
         value > p.engine.info.workUpper[iVar] + p.primal_feasibility_tolerance ||
-            error("PrimalSolver : shiftBound upper sans violation")
+            error("PrimalSolver: shiftBound upper without violation")
         infeasibility = value - p.engine.info.workUpper[iVar]
         shift = infeasibility + feasibility
         bound = p.engine.info.workUpper[iVar] + shift
@@ -1371,13 +1362,13 @@ function shift_bound!(p::PrimalSolver, lower::Bool, iVar::Int,
 end
 
 """
-`HEkkPrimal::savePrimalRay` : variable entrante et signe opposé à son
-mouvement. Le vecteur du rayon (export) reste hors périmètre (§1).
+`HEkkPrimal::savePrimalRay`: incoming variable and sign opposite to its movement.
+Ray vector export omitted (§1).
 """
 function save_primal_ray!(p::PrimalSolver)
     p.variable_in >= 0 ||
-        error("PrimalSolver : rayon primal sans variable entrante")
-    p.move_in != kNoRaySign || error("PrimalSolver : rayon primal sans signe")
+        error("PrimalSolver: primal ray without incoming variable")
+    p.move_in != kNoRaySign || error("PrimalSolver: primal ray without sign")
     ray = p.engine.primal_ray_record
     clear!(ray)
     ray.index = p.variable_in
@@ -1385,7 +1376,7 @@ function save_primal_ray!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::getBasicPrimalInfeasibility` — num/max/sum sur les basiques."""
+"""`HEkkPrimal::getBasicPrimalInfeasibility` — num/max/sum over basics."""
 function get_basic_primal_infeasibility!(p::PrimalSolver)
     info = p.engine.info
     tolerance = p.primal_feasibility_tolerance
@@ -1413,7 +1404,7 @@ function get_basic_primal_infeasibility!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::rebuild` — INVERT, primal, phase, duals et objectif."""
+"""`HEkkPrimal::rebuild` — INVERT, primal, phase, duals, and objective."""
 function rebuild!(p::PrimalSolver)
     e = p.engine
     info = e.info
@@ -1433,12 +1424,12 @@ function rebuild!(p::PrimalSolver)
         reset_synthetic_clock!(e)
     end
     if !status.has_ar_matrix
-        # N'arrive qu'en backtracking.
-        info.backtracking || error("PrimalSolver : ar_matrix absente")
+        # Only occurs during backtracking.
+        info.backtracking || error("PrimalSolver: ar_matrix absent")
         initialise_partitioned_rowwise_matrix!(e)
     end
     if info.backtracking
-        # Le backtracking peut changer de phase : on ressort.
+        # Backtracking can change phase: exit.
         p.solve_phase = kSolvePhaseUnknown
         return p
     end
@@ -1446,8 +1437,8 @@ function rebuild!(p::PrimalSolver)
     p.solve_phase == kSolvePhase2 && correct_primal!(p)
     get_basic_primal_infeasibility!(p)
     if info.num_primal_infeasibilities > 0
-        # Infaisabilités primales : la source bascule en phase 1 et recalcule
-        # coûts et duals de phase 1.
+        # Primal infeasibilities: source switches to phase 1 and recomputes
+        # phase 1 costs and duals.
         p.solve_phase == kSolvePhase2 && (p.solve_phase = kSolvePhase1)
         phase1_compute_dual!(p)
     else
@@ -1469,7 +1460,7 @@ function rebuild!(p::PrimalSolver)
     return p
 end
 
-"""`HEkkPrimal::correctPrimal` — shifts sur les infaisabilités du rebuild."""
+"""`HEkkPrimal::correctPrimal` — shifts on rebuild infeasibilities."""
 function correct_primal!(p::PrimalSolver, initialise::Bool=false)
     e = p.engine
     info = e.info
@@ -1478,7 +1469,7 @@ function correct_primal!(p::PrimalSolver, initialise::Bool=false)
         return true
     end
     p.solve_phase == kSolvePhase2 ||
-        error("PrimalSolver : correctPrimal hors phase 2")
+        error("PrimalSolver: correctPrimal outside phase 2")
     num_primal_correction = 0
     max_primal_correction = 0.0
     sum_primal_correction = 0.0
@@ -1522,7 +1513,7 @@ function correct_primal!(p::PrimalSolver, initialise::Bool=false)
     return true
 end
 
-"""`HEkkPrimal::cleanup` — retire perturbations et shifts de bornes."""
+"""`HEkkPrimal::cleanup` — remove bound perturbations and shifts."""
 function cleanup!(p::PrimalSolver)
     e = p.engine
     info = e.info

@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
     int total_solves = 0;
     int total_iters = 0;
     double final_obj = 0.0;
+    int final_status = -1;
 
     for (int rep = 0; rep < repeats; rep++) {
         Highs highs;
@@ -57,6 +58,14 @@ int main(int argc, char** argv) {
         highs.setOptionValue("solver", "simplex");
         highs.setOptionValue("presolve", "off");
         highs.setOptionValue("parallel", "off");
+        // Match TinyHiGHS and the frozen sequence oracle: no scaling and the
+        // same deterministic dual-simplex defaults. Keeping these explicit is
+        // essential for separating numerical pivot effects from configuration
+        // differences in the warm-start replay.
+        highs.setOptionValue("simplex_scale_strategy", 0);
+        highs.setOptionValue("simplex_dual_edge_weight_strategy", -1);
+        highs.setOptionValue("dual_simplex_cost_perturbation_multiplier", 1.0);
+        highs.setOptionValue("random_seed", 0);
 
         HighsStatus status = highs.readModel(base_lp_path);
         if (status != HighsStatus::kOk) {
@@ -66,6 +75,7 @@ int main(int argc, char** argv) {
 
         int current_solves = 0;
         int current_iters = 0;
+        int current_status = -1;
 
         auto t0 = std::chrono::high_resolution_clock::now();
 
@@ -116,6 +126,7 @@ int main(int argc, char** argv) {
                 current_solves++;
                 current_iters += highs.getInfo().simplex_iteration_count;
                 final_obj = highs.getInfo().objective_function_value;
+                current_status = static_cast<int>(highs.getModelStatus());
             } else if (op == "end") {
                 break;
             }
@@ -129,6 +140,7 @@ int main(int argc, char** argv) {
         }
         total_solves = current_solves;
         total_iters = current_iters;
+        final_status = current_status;
     }
 
     double us_per_solve = (best_time_ms * 1000.0) / total_solves;
@@ -136,6 +148,7 @@ int main(int argc, char** argv) {
     std::printf(" Total Solves      : %d\n", total_solves);
     std::printf(" Total Iterations  : %d\n", total_iters);
     std::printf(" Final Objective   : %.10g\n", final_obj);
+    std::printf(" Final Status Code : %d\n", final_status);
     std::printf(" Best Elapsed Time : %.2f ms\n", best_time_ms);
     std::printf(" Average Solve Time: %.1f µs / solve\n", us_per_solve);
     std::cout << "================================================================================" << std::endl;

@@ -299,6 +299,12 @@ if !isfile(HFACTOR_ORACLE_BIN)
     @info "oracle HFactor absent — tests ignorés (nécessite oracle/build.sh)"
 else
 @testset "oracle C++ — HFactor (source gelée)" begin
+    # The frozen C++ oracle performs scalar division. Keep this calibration
+    # bit-for-bit by using the reference strategy; branchless multiplication is
+    # covered separately with an explicit one-ULP contract.
+    old_strat = ACTIVE_PIVOT_STRATEGY[]
+    set_pivot_strategy!(kPivotBranching)
+    try
     if isfile(HFACTOR_ORACLE_BIN)
         @testset "étalonnage : build + solves + updates + rebuild" begin
             rng = MersenneTwister(20260916)
@@ -354,6 +360,9 @@ else
             @test isempty(problems)
             isempty(problems) || @info "écarts" problems
         end
+    end
+    finally
+        set_pivot_strategy!(old_strat)
     end
 end
 end

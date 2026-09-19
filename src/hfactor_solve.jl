@@ -1,19 +1,54 @@
-# `rebuild` ne sont pas portés — M1b). HFactor.cpp:1529-1915 et solveHyper:61.
+# Factor solves: HFactor.cpp:1529-1915 and solveHyper:61.
 
 const EMPTY_FLOAT64_VEC = Float64[]
 
+# Active strategy for U pivot inversion
+const ACTIVE_PIVOT_STRATEGY = Ref{PivotStrategy}(kPivotBranching)
+
+"""
+    set_pivot_strategy!(s::PivotStrategy)
+
+Sets the global pivot inversion strategy in HFactor:
+- `kPivotBranching`: short-circuit with branches for unit pivots (±1.0)
+- `kPivotBranchless`: branchless multiplication by a pre-computed reciprocal
+  (bit-exact for unit pivots; arbitrary pivots may differ by one ULP)
+- `kPivotFdiv`: unconditional floating-point division (original HiGHS)
+"""
+function set_pivot_strategy!(s::PivotStrategy)
+    ACTIVE_PIVOT_STRATEGY[] = s
+    return s
+end
+
+@inline function apply_pivot(::Val{kPivotBranching}, pivot_multiplier::Float64, pivot_val::Float64, pivot_inv::Float64)
+    if pivot_val != 1.0
+        return pivot_val == -1.0 ? -pivot_multiplier : pivot_multiplier / pivot_val
+    end
+    return pivot_multiplier
+end
+
+@inline function apply_pivot(::Val{kPivotBranchless}, pivot_multiplier::Float64, pivot_val::Float64, pivot_inv::Float64)
+    return pivot_multiplier * pivot_inv
+end
+
+@inline function apply_pivot(::Val{kPivotFdiv}, pivot_multiplier::Float64, pivot_val::Float64, pivot_inv::Float64)
+    return pivot_multiplier / pivot_val
+end
+
 """
     solveHyper!(rhs, h_size, h_lookup, h_pivot_index, h_pivot_value,
-                has_pivot_value, h_start, h_end, end_shift, h_index, h_value)
+                has_pivot_value, h_start, h_end, end_shift, h_index, h_value,
+                h_pivot_inv_value=EMPTY_FLOAT64_VEC, strategy=Val(ACTIVE_PIVOT_STRATEGY[]))
 
-`HFactor::solveHyper` : construction de la liste hyper-sparse par parcours en
-profondeur, puis application en ordre inverse. `h_end[i + end_shift]` donne la
-fin de la colonne `i` (`end_shift = 1` pour L, `0` pour U).
+`HFactor::solveHyper`: constructs hyper-sparse list via depth-first search,
+then applies solves in reverse order. `h_end[i + end_shift]` gives the end
+of column `i` (`end_shift = 1` for L, `0` for U).
 """
 function solveHyper!(rhs::HVector, h_size::Int, h_lookup::Vector{Int},
     h_pivot_index::Vector{Int}, h_pivot_value::Vector{Float64},
     has_pivot_value::Bool, h_start::Vector{Int}, h_end::Vector{Int},
-    end_shift::Int, h_index::Vector{Int}, h_value::Vector{Float64})
+    end_shift::Int, h_index::Vector{Int}, h_value::Vector{Float64},
+    h_pivot_inv_value::Vector{Float64}=EMPTY_FLOAT64_VEC,
+    strategy::Val{S}=Val(ACTIVE_PIVOT_STRATEGY[])) where S
     rhs_count = rhs.count
     list_mark = rhs.cwork
     list_index = rhs.iwork
@@ -79,6 +114,7 @@ function solveHyper!(rhs::HVector, h_size::Int, h_lookup::Vector{Int},
         rhs.count = rhs_count
     else
         rhs_count = 0
+        has_inv = !isempty(h_pivot_inv_value)
         @inbounds for iList ∈ list_count:-1:1
             i = list_index[iList]
             list_mark[i] = 0x00
@@ -86,9 +122,8 @@ function solveHyper!(rhs::HVector, h_size::Int, h_lookup::Vector{Int},
             pivot_multiplier = rhs.array[pivotRow]
             if abs(pivot_multiplier) > kHighsTiny
                 pivot_val = h_pivot_value[i]
-                if pivot_val != 1.0
-                    pivot_multiplier = pivot_val == -1.0 ? -pivot_multiplier : pivot_multiplier / pivot_val
-                end
+                pivot_inv = has_inv ? h_pivot_inv_value[i] : 1.0 / pivot_val
+                pivot_multiplier = apply_pivot(strategy, pivot_multiplier, pivot_val, pivot_inv)
                 rhs.array[pivotRow] = pivot_multiplier
                 rhs_count += 1
                 rhs.index[rhs_count] = pivotRow
@@ -104,7 +139,7 @@ function solveHyper!(rhs::HVector, h_size::Int, h_lookup::Vector{Int},
     return rhs
 end
 
-"""`HFactor::ftranFT` — partie update Forrest-Tomlin (vide sans update)."""
+"""`HFactor::ftranFT` — Forrest-Tomlin update solve (empty without update)."""
 function ftranFT!(f::HFactor, vector::HVector)
     rhs_count = vector.count
     pf_pivot_count = length(f.pf_pivot_index)
@@ -132,7 +167,7 @@ function ftranFT!(f::HFactor, vector::HVector)
     return vector
 end
 
-"""`HFactor::btranFT` — partie update Forrest-Tomlin (vide sans update)."""
+"""`HFactor::btranFT` — Forrest-Tomlin update solve (empty without update)."""
 function btranFT!(f::HFactor, vector::HVector)
     rhs_count = vector.count
     pf_pivot_count = length(f.pf_pivot_index)
@@ -159,7 +194,7 @@ function btranFT!(f::HFactor, vector::HVector)
     return vector
 end
 
-"""`HFactor::ftranL` — résolution L (avant, sparse ou hyper-sparse)."""
+"""`HFactor::ftranL` — L solve (forward, sparse or hyper-sparse)."""
 function ftranL!(f::HFactor, rhs::HVector, expected_density::Float64)
     current_density = 1.0 * rhs.count * f.inv_num_row
     sparse_solve = rhs.count < 0 || current_density > kHyperCancel ||
@@ -187,7 +222,7 @@ function ftranL!(f::HFactor, rhs::HVector, expected_density::Float64)
     return rhs
 end
 
-"""`HFactor::btranL` — résolution L^T (arrière, sparse ou hyper-sparse)."""
+"""`HFactor::btranL` — L^T solve (backward, sparse or hyper-sparse)."""
 function btranL!(f::HFactor, rhs::HVector, expected_density::Float64)
     current_density = 1.0 * rhs.count * f.inv_num_row
     sparse_solve = rhs.count < 0 || current_density > kHyperCancel ||
@@ -216,8 +251,8 @@ function btranL!(f::HFactor, rhs::HVector, expected_density::Float64)
     return rhs
 end
 
-"""`HFactor::ftranU` — résolution U (arrière, sparse ou hyper-sparse)."""
-function ftranU!(f::HFactor, rhs::HVector, expected_density::Float64)
+"""`HFactor::ftranU` — U solve (backward, sparse or hyper-sparse)."""
+function ftranU!(f::HFactor, rhs::HVector, expected_density::Float64, strategy::Val{S}=Val(ACTIVE_PIVOT_STRATEGY[])) where S
     if f.update_method == kUpdateMethodFt
         ftranFT!(f, rhs)
         tight!(rhs)
@@ -236,9 +271,8 @@ function ftranU!(f::HFactor, rhs::HVector, expected_density::Float64)
             pivot_multiplier = rhs.array[pivotRow]
             if abs(pivot_multiplier) > kHighsTiny
                 pivot_val = f.u_pivot_value[i_logic]
-                if pivot_val != 1.0
-                    pivot_multiplier = pivot_val == -1.0 ? -pivot_multiplier : pivot_multiplier / pivot_val
-                end
+                pivot_inv = f.u_pivot_inv_value[i_logic]
+                pivot_multiplier = apply_pivot(strategy, pivot_multiplier, pivot_val, pivot_inv)
                 rhs_count += 1
                 rhs.index[rhs_count] = pivotRow
                 rhs.array[pivotRow] = pivot_multiplier
@@ -258,13 +292,13 @@ function ftranU!(f::HFactor, rhs::HVector, expected_density::Float64)
     else
         solveHyper!(rhs, f.num_row, f.u_pivot_lookup, f.u_pivot_index,
             f.u_pivot_value, true, f.u_start, f.u_last_p, 0, f.u_index,
-            f.u_value)
+            f.u_value, f.u_pivot_inv_value, strategy)
     end
     return rhs
 end
 
-"""`HFactor::btranU` — résolution U^T (avant, sparse ou hyper-sparse)."""
-function btranU!(f::HFactor, rhs::HVector, expected_density::Float64)
+"""`HFactor::btranU` — U^T solve (forward, sparse or hyper-sparse)."""
+function btranU!(f::HFactor, rhs::HVector, expected_density::Float64, strategy::Val{S}=Val(ACTIVE_PIVOT_STRATEGY[])) where S
     current_density = 1.0 * rhs.count * f.inv_num_row
     sparse_solve = rhs.count < 0 || current_density > kHyperCancel ||
                    expected_density > kHyperBtranU
@@ -278,9 +312,8 @@ function btranU!(f::HFactor, rhs::HVector, expected_density::Float64)
             pivot_multiplier = rhs.array[pivotRow]
             if abs(pivot_multiplier) > kHighsTiny
                 pivot_val = f.u_pivot_value[i_logic]
-                if pivot_val != 1.0
-                    pivot_multiplier = pivot_val == -1.0 ? -pivot_multiplier : pivot_multiplier / pivot_val
-                end
+                pivot_inv = f.u_pivot_inv_value[i_logic]
+                pivot_multiplier = apply_pivot(strategy, pivot_multiplier, pivot_val, pivot_inv)
                 rhs_count += 1
                 rhs.index[rhs_count] = pivotRow
                 rhs.array[pivotRow] = pivot_multiplier
@@ -300,7 +333,7 @@ function btranU!(f::HFactor, rhs::HVector, expected_density::Float64)
     else
         solveHyper!(rhs, f.num_row, f.u_pivot_lookup, f.u_pivot_index,
             f.u_pivot_value, true, f.ur_start, f.ur_lastp, 0, f.ur_index,
-            f.ur_value)
+            f.ur_value, f.u_pivot_inv_value, strategy)
     end
     if f.update_method == kUpdateMethodFt
         tight!(rhs)
@@ -312,18 +345,18 @@ function btranU!(f::HFactor, rhs::HVector, expected_density::Float64)
 end
 
 """`HFactor::ftranCall` — `B x = b`."""
-function ftranCall!(f::HFactor, vector::HVector, expected_density::Float64)
+function ftranCall!(f::HFactor, vector::HVector, expected_density::Float64, strategy::Val{S}=Val(ACTIVE_PIVOT_STRATEGY[])) where S
     use_indices = vector.count >= 0
     ftranL!(f, vector, expected_density)
-    ftranU!(f, vector, expected_density)
+    ftranU!(f, vector, expected_density, strategy)
     use_indices && reIndex!(vector)
     return vector
 end
 
 """`HFactor::btranCall` — `B^T x = b`."""
-function btranCall!(f::HFactor, vector::HVector, expected_density::Float64)
+function btranCall!(f::HFactor, vector::HVector, expected_density::Float64, strategy::Val{S}=Val(ACTIVE_PIVOT_STRATEGY[])) where S
     use_indices = vector.count >= 0
-    btranU!(f, vector, expected_density)
+    btranU!(f, vector, expected_density, strategy)
     btranL!(f, vector, expected_density)
     use_indices && reIndex!(vector)
     return vector

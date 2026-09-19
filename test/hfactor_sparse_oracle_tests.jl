@@ -123,28 +123,34 @@ if !isfile(HFACTOR_SPARSE_BIN)
     @info "oracle HFactor creux absent — tests ignorés (nécessite oracle/build.sh)"
 else
 @testset "oracle C++ — HFactor creux (index fournis, chaînes d'updates)" begin
-    if isfile(HFACTOR_SPARSE_BIN)
-        rng = MersenneTwister(20260930)
-        problems = String[]
-        for (icase, (n, n_updates)) ∈ enumerate(vcat([(rand(rng, 4:12), 0) for _ ∈ 1:12],
-            [(rand(rng, 4:12), 40) for _ ∈ 1:8]))
-            A, basic, updates, rhs_list = sparse_solve_case(rng; n=n,
-                n_updates=n_updates, n_rhs=3)
-            input = IOBuffer()
-            write_sparse_case(input, csc_from_dense(A), basic, updates,
-                rhs_list)
-            got = split(read(pipeline(`$HFACTOR_SPARSE_BIN`;
-                stdin=IOBuffer(String(take!(input)))), String), '\n')
-            expected = port_sparse_case(A, basic, updates, rhs_list)
-            for (k, line) ∈ enumerate(expected)
-                strip(got[k]) == line ||
-                    push!(problems, "cas $icase ligne $k : $line ≠ $(strip(got[k]))")
+    old_strat = ACTIVE_PIVOT_STRATEGY[]
+    set_pivot_strategy!(kPivotBranching)
+    try
+        if isfile(HFACTOR_SPARSE_BIN)
+            rng = MersenneTwister(20260930)
+            problems = String[]
+            for (icase, (n, n_updates)) ∈ enumerate(vcat([(rand(rng, 4:12), 0) for _ ∈ 1:12],
+                [(rand(rng, 4:12), 40) for _ ∈ 1:8]))
+                A, basic, updates, rhs_list = sparse_solve_case(rng; n=n,
+                    n_updates=n_updates, n_rhs=3)
+                input = IOBuffer()
+                write_sparse_case(input, csc_from_dense(A), basic, updates,
+                    rhs_list)
+                got = split(read(pipeline(`$HFACTOR_SPARSE_BIN`;
+                    stdin=IOBuffer(String(take!(input)))), String), '\n')
+                expected = port_sparse_case(A, basic, updates, rhs_list)
+                for (k, line) ∈ enumerate(expected)
+                    strip(got[k]) == line ||
+                        push!(problems, "cas $icase ligne $k : $line ≠ $(strip(got[k]))")
+                    length(problems) > 5 && break
+                end
                 length(problems) > 5 && break
             end
-            length(problems) > 5 && break
+            @test isempty(problems)
+            isempty(problems) || @info "écarts solves creux" problems
         end
-        @test isempty(problems)
-        isempty(problems) || @info "écarts solves creux" problems
+    finally
+        set_pivot_strategy!(old_strat)
     end
 end
 end

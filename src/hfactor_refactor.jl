@@ -1,8 +1,8 @@
-# `HFactor::rebuild` (HFactorRefactor.cpp:30), complétion des bases déficientes
-# (`buildHandleRankDeficiency`/`buildMarkSingC`, HFactor.cpp:1263/1365) et mise à
-# jour Forrest-Tomlin (`updateFT`, HFactor.cpp:2300). M1b.
+# `HFactor::rebuild` (HFactorRefactor.cpp:30), rank deficient basis completion
+# (`buildHandleRankDeficiency`/`buildMarkSingC`, HFactor.cpp:1263/1365) and
+# Forrest-Tomlin update (`updateFT`, HFactor.cpp:2300).
 
-"""`HFactor::rebuild` — rejoue les pivots de `refactor_info` sans Markowitz."""
+"""`HFactor::rebuild` — replay pivots from `refactor_info` without Markowitz search."""
 function rebuild!(f::HFactor)
     luClear!(f)
     f.nwork = 0
@@ -74,7 +74,7 @@ function rebuild!(f::HFactor)
                 push!(f.u_start, length(f.u_index) + 1)
             end
         else
-            # Premier pivot de Markowitz : le reste est traité en bloc.
+            # First Markowitz pivot: remaining pivots are processed in batch.
             stage = iK - 1
             break
         end
@@ -84,7 +84,7 @@ function rebuild!(f::HFactor)
     end
 
     if stage < f.num_row
-        # Complète L par des colonnes identité pour les lignes sans pivot.
+        # Complete L with identity columns for rows without pivots.
         resize!(f.l_start, f.num_row + 1)
         for k ∈ (stage + 1):f.num_row
             f.l_start[k + 1] = f.l_start[k]
@@ -162,8 +162,8 @@ function rebuild!(f::HFactor)
 end
 
 """
-`HFactor::buildHandleRankDeficiency` — remplace les colonnes sans pivot par des
-logiques et complète le facteur pour les lignes réelles.
+`HFactor::buildHandleRankDeficiency` — replaces columns without pivots with
+logical slacks and completes the factor for structural rows.
 """
 function buildHandleRankDeficiency!(f::HFactor)
     if f.num_basic < f.num_row
@@ -221,7 +221,7 @@ function buildHandleRankDeficiency!(f::HFactor)
     return f
 end
 
-"""`HFactor::buildMarkSingC` — réordonne `basic_index` et note les variables évincées."""
+"""`HFactor::buildMarkSingC` — reorders `basic_index` and records replaced variables."""
 function buildMarkSingC!(f::HFactor)
     basic_index_rank_deficiency = f.rank_deficiency - max(f.num_row - f.num_basic, 0)
     f.var_with_no_pivot = zeros(Int, f.rank_deficiency)
@@ -242,13 +242,13 @@ end
 """
     update!(f, aq, ep, iRow)
 
-`HFactor::update` — mise à jour Forrest-Tomlin. `aq` porte `B^{-1} a_q` (packé)
-et `ep` `B^{-T} e_p` (packé) ; `iRow` est la ligne sortante (1-based).
+`HFactor::update` — Forrest-Tomlin update. `aq` holds `B^{-1} a_q` (packed)
+and `ep` holds `B^{-T} e_p` (packed); `iRow` is the leaving row (1-based).
 """
 function update!(f::HFactor, aq::HVector, ep::HVector, iRow::Int)
     clear!(f.refactor_info)
     f.update_method == kUpdateMethodFt ||
-        error("seul l'update FT est porté (update_method = $(f.update_method))")
+        error("only FT update is supported (update_method = $(f.update_method))")
     return updateFT!(f, aq, ep, iRow)
 end
 
@@ -259,7 +259,7 @@ function updateFT!(f::HFactor, aq::HVector, ep::HVector, iRow::Int)
     alpha = aq.array[iRow]
     f.u_pivot_index[p_logic] = 0
 
-    # Supprime la ligne pivot de U.
+    # Remove pivot row from U.
     for k ∈ f.ur_start[p_logic]:(f.ur_lastp[p_logic] - 1)
         i_logic = f.u_pivot_lookup[f.ur_index[k]]
         f.u_last_p[i_logic] -= 1
@@ -272,7 +272,7 @@ function updateFT!(f::HFactor, aq::HVector, ep::HVector, iRow::Int)
         f.u_value[i_find] = f.u_value[i_last]
     end
 
-    # Supprime la colonne pivot de UR.
+    # Remove pivot column from UR.
     for k ∈ f.u_start[p_logic]:(f.u_last_p[p_logic] - 1)
         i_logic = f.u_pivot_lookup[f.u_index[k]]
         f.ur_lastp[i_logic] -= 1
@@ -286,7 +286,7 @@ function updateFT!(f::HFactor, aq::HVector, ep::HVector, iRow::Int)
         f.ur_value[i_find] = f.ur_value[i_last]
     end
 
-    # Nouvelle colonne dans U.
+    # New column in U.
     push!(f.u_start, length(f.u_index) + 1)
     for i ∈ 1:aq.packCount
         if aq.packIndex[i] != iRow
@@ -299,7 +299,7 @@ function updateFT!(f::HFactor, aq::HVector, ep::HVector, iRow::Int)
     u_endX = f.u_last_p[end]
     f.u_total_x += u_endX - u_startX + 1
 
-    # Nouveaux éléments UR (avec croissance géométrique).
+    # New UR entries (with geometric buffer growth).
     for k ∈ u_startX:(u_endX - 1)
         i_logic = f.u_pivot_lookup[f.u_index[k]]
         if f.ur_space[i_logic] == 0
@@ -331,9 +331,11 @@ function updateFT!(f::HFactor, aq::HVector, ep::HVector, iRow::Int)
 
     f.u_pivot_lookup[iRow] = length(f.u_pivot_index) + 1
     push!(f.u_pivot_index, iRow)
-    push!(f.u_pivot_value, pivot * alpha)
+    new_pivot = pivot * alpha
+    push!(f.u_pivot_value, new_pivot)
+    push!(f.u_pivot_inv_value, 1.0 / new_pivot)
 
-    # Ligne `ep` comme matrice R.
+    # Row ep as R matrix.
     pf_entries_before = f.pf_start[end] - 1
     for i ∈ 1:ep.packCount
         if ep.packIndex[i] != iRow

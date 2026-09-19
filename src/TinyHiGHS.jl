@@ -1,11 +1,14 @@
 """
     TinyHiGHS
 
-Portage Julia pur et autonome du simplexe révisé dual et primal de HiGHS (MIT).
-Optimisé pour la résolution haute performance de problèmes d'optimisation linéaire
-(LPs) récurrents, de flots sur réseaux et de chaînes de sous-problèmes sans allocation.
+Pure, standalone Julia port of the revised dual and primal simplex solver from HiGHS (MIT License).
+Optimized for high-performance zero-allocation warm-start re-optimization of sequential
+linear programs (LPs), network flow subproblems, and mathematical decomposition loops.
 """
 module TinyHiGHS
+
+"""MathOptInterface optimizer constructor, available when MOI is loaded."""
+function Optimizer end
 
 export HVector, SimplexBasis, SimplexInfo, HFactor, SparseMatrix, setup!, clear!,
     clearScalars!, tight!, pack!, reIndex!, norm2, saxpy!, build!, ftranCall!,
@@ -47,7 +50,10 @@ export HVector, SimplexBasis, SimplexInfo, HFactor, SparseMatrix, setup!, clear!
     unscale_simplex!, restore_scale!, kSimplexScaleStrategyOff,
     kSimplexScaleStrategyChoose, kSimplexScaleStrategyEquilibration,
     kSimplexScaleStrategyForcedEquilibration, kSimplexScaleStrategyMaxValue,
-    read_lp, write_lp, solve_lp
+    read_lp, write_lp, solve_lp,
+    Optimizer,
+    PivotStrategy, kPivotBranching, kPivotBranchless, kPivotFdiv,
+    ACTIVE_PIVOT_STRATEGY, set_pivot_strategy!
 
 include("constants.jl")
 include("hvector.jl")

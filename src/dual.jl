@@ -1,19 +1,19 @@
-# Portage de `simplex/HEkkDual.{h,cpp}` (licence MIT, HiGHS) — M3b/M3c :
-# itération duale, DSE/Devex et bascule, perturbation des coûts, taboos,
-# backtracking et cycle de ré-inversion.
+# Port of `simplex/HEkkDual.{h,cpp}` (MIT License, HiGHS) — M3b/M3c:
+# dual iterations, DSE/Devex and switching, cost perturbation, taboos,
+# backtracking and reinversion cycle.
 #
-# Porté : `initialiseSolve`, `solvePhase1`, `solvePhase2`, `rebuild`, `cleanup`
-# (sans nettoyage primal), `iterate`, `chooseRow` (Dantzig), `chooseColumn`
+# Ported: `initialiseSolve`, `solvePhase1`, `solvePhase2`, `rebuild`, `cleanup`
+# (without primal cleanup), `iterate`, `chooseRow` (Dantzig), `chooseColumn`
 # (ratio test `DualRow`, `improveChooseColumnRow`), `updateFtran`/
 # `updateFtranBFRT`, `updateVerify`, `updateDual`, `updatePrimal`,
 # `updatePivots`, `correctDualInfeasibilities`,
 # `computeDualInfeasibilitiesWithFixedVariableFlips`,
 # `assessPhase1Optimality`, `exitPhase1ResetDuals`,
-# `assessPossiblyDualUnbounded` (avec preuve d'infaisabilité).
+# `assessPossiblyDualUnbounded` (with infeasibility proof).
 #
-# Non porté : multi-pivot/PAMI (`chooseColumnSlice`, `HEkkDualMulti`), rayons,
-# rapports. Chaque branche absente lève une erreur explicite plutôt que de
-# dégrader silencieusement.
+# Not ported: multi-pivot/PAMI (`chooseColumnSlice`, `HEkkDualMulti`), rays,
+# reporting. Missing branches throw explicit errors rather than silently
+# degrading.
 
 """
     DualSolver(engine::SimplexEngine)
@@ -72,9 +72,9 @@ end
 """
     reset!(d, e = d.engine)
 
-Réinitialise intégralement un `DualSolver` existant pour une nouvelle résolution.
-L'état obtenu est bit-à-bit strictement identique à un `DualSolver(e)` fraîchement
-construit, avec zéro allocation.
+Fully resets an existing `DualSolver` for a new solve.
+The resulting state is bit-for-bit identical to a freshly constructed
+`DualSolver(e)`, with zero allocations.
 """
 function reset!(d::DualSolver, e::SimplexEngine=d.engine)
     num_row = e.lp.num_row
@@ -137,7 +137,7 @@ function initialise_solve!(d::DualSolver)
         d.edge_weight_mode = kEdgeWeightDevex
         e.info.allow_dual_steepest_edge_to_devex_switch = false
     else
-        error("DualSolver : stratégie de poids $strategy inconnue")
+        error("DualSolver: unknown edge weight strategy $strategy")
     end
     e.model_status = kNotset
     e.solve_bailout = false
@@ -147,31 +147,31 @@ function initialise_solve!(d::DualSolver)
 end
 
 """
-    solve!(d; force_phase2 = false, classify = true)
+    solve!(d; force_phase2 = false, classify = true, restore = true)
 
-`HEkkDual::solve` (sous-ensemble), suivi de la classification
-`kUnboundedOrInfeasible` de `HEkk::solve` (le primal tranche) quand `classify`.
-Suppose le facteur frais (`compute_factor!`) et `set_basis!` faits. Rend le
-moteur ; le statut est dans `engine.model_status`. `classify = false` pour
-l'appel imbriqué du nettoyage primal, où la classification n'a pas lieu
-(elle appartient au niveau `HEkk::solve`).
+`HEkkDual::solve` (subset), followed by `kUnboundedOrInfeasible` classification
+from `HEkk::solve` (primal decides) when `classify=true`.
+Assumes a fresh factor (`compute_factor!`) and `set_basis!` have been executed.
+Returns the engine; status is in `engine.model_status`. `classify = false` is used
+for the nested call from primal cleanup, where classification does not take place
+(it belongs to the top-level `HEkk::solve`).
 """
 function solve!(d::DualSolver; force_phase2::Bool=false, classify::Bool=true,
     restore::Bool=true)
     e = d.engine
-    # `Highs::run` a rejeté les bornes : le LP est infaisable sans simplexe.
+    # `Highs::run` rejected bounds: LP is infeasible without simplex.
     e.bounds_infeasible && return e
     initialise_solve!(d)
     initialise_control!(e)
-    # `HEkk::solve` : oublie le rayon d'un solve antérieur.
+    # `HEkk::solve`: clear ray records from a previous solve.
     clear_ray_records!(e)
-    d.solver_num_row > 0 || error("DualSolver : LP sans ligne")
-    e.status.has_invert || error("DualSolver : INVERT requis avant solve")
-    # `HEkk::solve` : lève d'éventuels blocages hérités d'un solve précédent.
+    d.solver_num_row > 0 || error("DualSolver: LP has no rows")
+    e.status.has_invert || error("DualSolver: INVERT required before solve")
+    # `HEkk::solve`: lift any blocks inherited from a previous solve.
     e.info.allow_cost_shifting = true
     e.info.allow_cost_perturbation = true
     e.info.allow_bound_perturbation = true
-    # Duals avec coûts non perturbés.
+    # Duals with unperturbed costs.
     initialise_cost!(e, kDual, kSolvePhaseUnknown)
     compute_dual!(e)
     compute_simplex_dual_infeasible!(e)
@@ -188,8 +188,8 @@ function solve!(d::DualSolver; force_phase2::Bool=false, classify::Bool=true,
     perturb_costs = !near_optimal
     initialise_cost!(e, kDual, kSolvePhaseUnknown; perturb=perturb_costs)
     bailout!(e) && return e
-    # Poids de rangée (`HEkkDual::solve`) : unitaires en Dantzig et pour une
-    # base logique ; DSE exact sinon.
+    # Row weights (`HEkkDual::solve`): unit weights for Dantzig and logical
+    # basis; exact DSE otherwise.
     if !e.status.has_dual_steepest_edge_weights
         fill!(e.dual_edge_weight, 1.0)
         resize!(e.scattered_dual_edge_weight, d.solver_num_tot)
@@ -197,7 +197,7 @@ function solve!(d::DualSolver; force_phase2::Bool=false, classify::Bool=true,
             if d.initial_basis_is_logical
                 e.status.has_dual_steepest_edge_weights = true
             elseif near_optimal
-                # Base non logique quasi optimale : Devex plutôt que DSE.
+                # Near-optimal non-logical basis: Devex rather than DSE.
                 d.edge_weight_mode = kEdgeWeightDevex
             else
                 compute_dual_steepest_edge_weights!(e, true)
@@ -230,7 +230,7 @@ function solve!(d::DualSolver; force_phase2::Bool=false, classify::Bool=true,
             d.solve_phase = d.dual_infeas_count > 0 ? kSolvePhase1 :
                             kSolvePhase2
             if e.info.backtracking
-                # Bounds et valeurs pour la phase retenue, puis on oublie le
+                # Bounds and values for the selected phase, then clear
                 # backtracking.
                 initialise_bound!(e, kDual, d.solve_phase)
                 initialise_nonbasic_value_and_move!(e)
@@ -261,14 +261,14 @@ function solve!(d::DualSolver; force_phase2::Bool=false, classify::Bool=true,
          d.solve_phase == kSolvePhaseOptimalCleanup ||
          d.solve_phase == kSolvePhasePrimalInfeasibleCleanup) && break
     end
-    # `HEkkDual::solve` : après la boucle, nettoyage primal des infaisabilités
-    # duales résiduelles (M4a).
+    # `HEkkDual::solve`: after the loop, primal cleanup of residual
+    # dual infeasibilities (M4a).
     if d.solve_phase == kSolvePhaseOptimalCleanup ||
        d.solve_phase == kSolvePhasePrimalInfeasibleCleanup
         e.dual_simplex_cleanup_level += 1
         if d.solve_phase == kSolvePhasePrimalInfeasibleCleanup
-            # Infaisabilités inconnues après une fausse non-bornitude : les
-            # calculer avant le nettoyage.
+            # Unknown infeasibilities after false unboundedness: compute
+            # before cleanup.
             compute_simplex_infeasible!(e)
         end
         if e.dual_simplex_cleanup_level >
@@ -279,25 +279,24 @@ function solve!(d::DualSolver; force_phase2::Bool=false, classify::Bool=true,
             save = e.info.primal_simplex_bound_perturbation_multiplier
             e.info.primal_simplex_bound_perturbation_multiplier = 0
             p = PrimalSolver(e)
-            # Appel imbriqué : le niveau « HApp » rendra les échelles.
+            # Nested call: outer level will restore scales.
             solve!(p; force_phase2=true, restore=false)
             e.info.primal_simplex_bound_perturbation_multiplier = save
             e.solve_bailout && return return_from_solve!(e, kDual)
             if e.model_status == kOptimal &&
                e.info.num_primal_infeasibilities +
                e.info.num_dual_infeasibilities > 0
-                # La source avertit seulement : optimal malgré des
-                # infaisabilités tolérées.
+                # Source only warns: optimal despite tolerated infeasibilities.
             end
         end
     end
-    # `HEkkDual::solve` rend un état normalisé (`HEkk::returnFromSolve`), puis
-    # le niveau « HApp » retire les échelles (`moveBackLpAndUnapplyScaling`).
+    # `HEkkDual::solve` returns a normalized state (`HEkk::returnFromSolve`), then
+    # outer level removes scales (`moveBackLpAndUnapplyScaling`).
     return_from_solve!(e, kDual)
     restore && restore_scale!(e)
-    # `HEkk::solve` : le dual peut conclure `kUnboundedOrInfeasible` faute de
-    # preuve d'infaisabilité primale ; le primal tranche (M4b). HiGHS ne
-    # l'évite que si `allow_unbounded_or_infeasible` est demandé (défaut faux).
+    # `HEkk::solve`: dual may conclude `kUnboundedOrInfeasible` lacking proof
+    # of primal infeasibility; primal resolves this (M4b). HiGHS only avoids
+    # this if `allow_unbounded_or_infeasible` is requested (default false).
     if classify && e.model_status == kUnboundedOrInfeasible
         p = PrimalSolver(e)
         solve!(p)
@@ -308,8 +307,8 @@ end
 """
     solve_phase1!(d)
 
-`HEkkDual::solvePhase1` : bornes de phase 1, boucle rebuild/itérations, puis
-arrêt de phase (phase 2, infaisabilité duale ou erreur).
+`HEkkDual::solvePhase1`: phase 1 bounds, rebuild/iteration loop, then
+phase exit (phase 2, dual infeasibility, or error).
 """
 function solve_phase1!(d::DualSolver)
     e = d.engine
@@ -354,8 +353,8 @@ function solve_phase1!(d::DualSolver)
         d.solve_phase = kSolvePhaseError
         e.model_status = kSolveError
     elseif d.variable_in == -1
-        # Phase 1 duale non bornée. Avec des coûts perturbés, on retire la
-        # perturbation et on poursuit si plus aucune infaisabilité duale.
+        # Dual phase 1 unbounded. With perturbed costs, remove
+        # perturbation and continue if no remaining dual infeasibilities.
         if e.info.costs_perturbed
             cleanup!(d)
             d.dual_infeas_count == 0 && (d.solve_phase = kSolvePhase2)
@@ -381,8 +380,8 @@ end
 """
     solve_phase2!(d)
 
-`HEkkDual::solvePhase2` : boucle de phase 2, puis nettoyage des perturbations
-(ici sans effet) et conclusion (optimal, infaisable, retour en phase 1).
+`HEkkDual::solvePhase2`: phase 2 loop, then perturbation cleanup
+(no-op here) and conclusion (optimal, infeasible, return to phase 1).
 """
 function solve_phase2!(d::DualSolver)
     e = d.engine
@@ -444,7 +443,7 @@ function solve_phase2!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::rebuild` — duals, correction des infaisabilités, primals, liste."""
+"""`HEkkDual::rebuild` — duals, infeasibility correction, primals, infeas list."""
 function rebuild!(d::DualSolver)
     e = d.engine
     clear_bad_basis_change_taboo_flag!(e)
@@ -463,7 +462,7 @@ function rebuild!(d::DualSolver)
     previous_dual_objective_value = e.info.updated_dual_objective_value
     compute_dual!(e)
     if e.info.backtracking
-        # Reprise après restauration : la phase sera redéterminée.
+        # Recovery after restoration: phase will be redetermined.
         d.solve_phase = kSolvePhaseUnknown
         return d
     end
@@ -484,17 +483,15 @@ function rebuild!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::cleanup` — coûts non perturbés, duals et infaisabilités."""
+"""`HEkkDual::cleanup` — unperturbed costs, duals, and infeasibilities."""
 function cleanup!(d::DualSolver)
     e = d.engine
     if d.solve_phase == kSolvePhase1
-        # La source journalise puis `assert` au-delà de
-        # `max_dual_simplex_phase1_cleanup_level` : en `NDEBUG` (oracle et JLL
-        # de production) elle **poursuit**. Le port levait une erreur — il
-        # arrêtait le solve là où HiGHS continue, ce qui faisait échouer le
-        # rejeu échelonné là où le niveau est dépassé après divergence. Le
-        # niveau reste incrémenté : il garde `allow_cost_perturbation`
-        # (`solve_phase1!`).
+        # The source logs then asserts beyond `max_dual_simplex_phase1_cleanup_level`:
+        # in NDEBUG (oracle and production JLL) it continues. The original port threw
+        # an error — stopping the solve where HiGHS continues, causing scaled replay
+        # to fail when the level was exceeded after divergence. The level remains
+        # incremented to retain `allow_cost_perturbation` (`solve_phase1!`).
         e.dual_simplex_phase1_cleanup_level += 1
     end
     initialise_cost!(e, kDual, kSolvePhaseUnknown)
@@ -508,11 +505,11 @@ function cleanup!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::iterate` — une itération du simplexe dual."""
+"""`HEkkDual::iterate` — one dual simplex iteration."""
 function iterate!(d::DualSolver)
     choose_row!(d)
     choose_column!(d)
-    # `HEkkDual::isBadBasisChange` : changement mauvais ou cyclage.
+    # `HEkkDual::isBadBasisChange`: bad basis change or cycling.
     is_bad_basis_change!(d.engine, kDual, d.variable_in, d.row_out,
         d.rebuild_reason) && return d
     update_ftran_bfrt!(d)
@@ -528,7 +525,7 @@ function iterate!(d::DualSolver)
     if d.new_devex_framework
         initialise_devex_framework!(d)
     end
-    # `HEkkDual::iterationAnalysis` : contrôle de bascule DSE → Devex.
+    # `HEkkDual::iterationAnalysis`: check DSE → Devex switch.
     if d.edge_weight_mode == kEdgeWeightSteepestEdge && switch_to_devex!(d)
         d.edge_weight_mode = kEdgeWeightDevex
         initialise_devex_framework!(d)
@@ -536,7 +533,7 @@ function iterate!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::chooseRow` (Dantzig) — rangée sortante et BTRAN de son e_p."""
+"""`HEkkDual::chooseRow` (Dantzig) — pivot row selection and BTRAN of its e_p."""
 function choose_row!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     e = d.engine
@@ -544,8 +541,7 @@ function choose_row!(d::DualSolver)
     while true
         d.row_out = choose_normal!(d.dual_rhs)
         if d.row_out == kNoRowChosen
-            # La source ne restaure pas ici : `rebuild` recalculera les
-            # infaisabilités.
+            # Source does not restore here: `rebuild` will recompute infeasibilities.
             d.rebuild_reason = kRebuildReasonPossiblyOptimal
             return d
         end
@@ -556,18 +552,18 @@ function choose_row!(d::DualSolver)
         d.row_ep.packFlag = true
         btran!(e.nla, d.row_ep, e.info.row_ep_density)
         if d.edge_weight_mode == kEdgeWeightSteepestEdge
-            # Contrôle du poids DSE : on recalcule le poids exact et on
-            # n'accepte la rangée que s'il n'est pas trop sous-estimé.
+            # DSE weight check: recompute exact weight and accept
+            # row only if weight is not too underestimated.
             updated_edge_weight = e.dual_edge_weight[d.row_out]
-            # `simplex_in_scaled_space_` : le facteur est déjà dans l'espace
-            # échelonné, la norme exacte est celle de `row_ep`.
+            # `simplex_in_scaled_space_`: factor is already in scaled space,
+            # exact norm is that of `row_ep`.
             d.computed_edge_weight = e.lp.is_scaled ? norm2(d.row_ep) :
                                      row_ep_2norm_in_scaled_space(e.nla,
                                          d.row_out, d.row_ep)
             e.dual_edge_weight[d.row_out] = d.computed_edge_weight
             accept_dual_steepest_edge_weight!(d, updated_edge_weight) && break
         else
-            break                       # Dantzig : acceptation immédiate
+            break                       # Dantzig: immediate acceptance
         end
     end
     unapply_taboo_row_out!(e, d.dual_rhs.work_infeasibility)
@@ -586,10 +582,10 @@ function choose_row!(d::DualSolver)
 end
 
 """
-`HEkkDual::chooseColumn` — prix de la rangée pivot et ratio test dual. Quand la
-première passe choisit un pivot trop petit (sous `dual_simplex_pivot_growth_tolerance`),
-`improve_choose_column_row!` raffine la rangée et CHUZC reprend ; les passes
-suivantes retirent le pivot du paquet et recommencent.
+`HEkkDual::chooseColumn` — tableau row pricing and dual ratio test. When the
+first pass selects a pivot that is too small (below `dual_simplex_pivot_growth_tolerance`),
+`improve_choose_column_row!` refines the row and CHUZC restarts; subsequent
+passes remove the pivot from the pack and repeat.
 """
 function choose_column!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
@@ -619,10 +615,10 @@ function choose_column!(d::DualSolver)
             scaled_value = row_ep_scale * dual_row.workAlpha
             if abs(scaled_value) <= growth_tolerance
                 if chuzc_pass == 0
-                    # Premier échec : tenter une rangée pivot plus précise.
+                    # First failure: try a more accurate pivot row.
                     improve_choose_column_row!(d)
                 else
-                    # Pivot retiré du paquet ; CHUZC recommence sur le reste.
+                    # Pivot removed from pack; CHUZC restarts on remainder.
                     for i ∈ 1:dual_row.packCount
                         if dual_row.packIndex[i] == dual_row.workPivot
                             dual_row.packIndex[i] =
@@ -634,7 +630,7 @@ function choose_column!(d::DualSolver)
                         end
                     end
                 end
-                # Aucun pivot choisi pour cette passe.
+                # No pivot chosen for this pass.
                 dual_row.workPivot = -1
             end
         else
@@ -657,14 +653,14 @@ end
 """
     improve_choose_column_row!(d)
 
-`HEkkDual::improveChooseColumnRow` : raffine la rangée pivot (`row_ep`) quand
-le premier choix de CHUZC échoue sur un pivot trop petit. Le BTRAN unitaire est
-raffiné itérativement (résidu en double-double), le prix est refait en
-double-double (`HighsCDouble`), puis les sections 0/1 de CHUZC sont
-ré-exécutées : le mouvement provisoire des colonnes libres est annulé puis
-recalculé sur la rangée raffinée, et le paquet `row_ap`/`row_ep` est reconstruit.
-La boucle de `choose_column!` reprend ensuite en passe 1, avec l'échelle de
-pivot d'origine (`row_ep_scale` de la première passe, comme la source).
+`HEkkDual::improveChooseColumnRow`: refines the pivot row (`row_ep`) when
+the initial CHUZC choice fails on a pivot that is too small. Unit BTRAN is
+iteratively refined (residual in double-double), pricing is recomputed in
+double-double (`HighsCDouble`), then CHUZC sections 0/1 are re-executed:
+temporary movement of free columns is cancelled then recomputed on the
+refined row, and the `row_ap`/`row_ep` pack is rebuilt.
+The `choose_column!` loop then resumes in pass 1, with the original pivot scale
+(`row_ep_scale` from the first pass, matching HiGHS source).
 """
 function improve_choose_column_row!(d::DualSolver)
     e = d.engine
@@ -680,7 +676,7 @@ function improve_choose_column_row!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::updateFtranBFRT` — flips retournés au bord, puis FTRAN du BFRT."""
+"""`HEkkDual::updateFtranBFRT` — flips back to bounds, then FTRAN of BFRT."""
 function update_ftran_bfrt!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     e = d.engine
@@ -693,7 +689,7 @@ function update_ftran_bfrt!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::updateFtran` — colonne pivot par FTRAN."""
+"""`HEkkDual::updateFtran` — pivot column via FTRAN."""
 function update_ftran!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     e = d.engine
@@ -707,7 +703,7 @@ function update_ftran!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::updateVerify` — pivots colonne/rangée et ré-inversion."""
+"""`HEkkDual::updateVerify` — column/row pivots and reinversion."""
 function update_verify!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     reinvert, measure = reinvert_on_numerical_trouble!(d.engine, d.alpha_col,
@@ -717,7 +713,7 @@ function update_verify!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::updateDual` — duals après le pas, avec shifts si theta = 0."""
+"""`HEkkDual::updateDual` — duals after step, with shifts if theta == 0."""
 function update_dual!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     e = d.engine
@@ -739,7 +735,7 @@ function update_dual!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::updatePrimal` — primals (et poids, absents en Dantzig)."""
+"""`HEkkDual::updatePrimal` — primals (and weights, absent in Dantzig)."""
 function update_primal!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     e = d.engine
@@ -785,7 +781,7 @@ function update_primal!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::updateFtranDSE` — FTRAN de `row_ep` pour le poids DSE."""
+"""`HEkkDual::updateFtranDSE` — FTRAN of `row_ep` for DSE weight."""
 function update_ftran_dse!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     e = d.engine
@@ -797,8 +793,8 @@ function update_ftran_dse!(d::DualSolver)
 end
 
 """
-`HEkkDual::initialiseDevexFramework` : ensemble de référence = variables
-basiques (`devex_index = 1 - nonbasicFlag²`), poids remis à 1.
+`HEkkDual::initialiseDevexFramework`: reference framework = basic
+variables (`devex_index = 1 - nonbasicFlag²`), weights reset to 1.
 """
 function initialise_devex_framework!(d::DualSolver)
     e = d.engine
@@ -812,7 +808,7 @@ function initialise_devex_framework!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::newDevexFramework` — une nouvelle base de référence est-elle due ?"""
+"""`HEkkDual::newDevexFramework` — is a new reference framework due?"""
 function new_devex_framework_needed(d::DualSolver, updated_edge_weight::Float64)
     min_abs_devex_iterations = 25
     min_rlv_devex_iterations = 1e-2
@@ -827,7 +823,7 @@ function new_devex_framework_needed(d::DualSolver, updated_edge_weight::Float64)
     return !accept_ratio || !accept_it
 end
 
-"""`HEkkDual::acceptDualSteepestEdgeWeight` — poids recalculé accepté ou non."""
+"""`HEkkDual::acceptDualSteepestEdgeWeight` — recomputed weight accepted or rejected."""
 function accept_dual_steepest_edge_weight!(d::DualSolver,
     updated_edge_weight::Float64)
     accept = updated_edge_weight >=
@@ -838,9 +834,8 @@ function accept_dual_steepest_edge_weight!(d::DualSolver,
 end
 
 """
-`HEkk::switchToDevex` : décide la bascule DSE → Devex (coût de la NLA ou
-erreur de poids). La bascule elle-même n'est pas portée : `iterate!` lève une
-erreur si elle est déclenchée.
+`HEkk::switchToDevex`: decides DSE → Devex switch (NLA computational cost or
+weight error).
 """
 function switch_to_devex!(d::DualSolver)
     e = d.engine
@@ -882,7 +877,7 @@ function switch_to_devex!(d::DualSolver)
     return switch_to_devex
 end
 
-"""`HEkkDual::updatePivots` — base, facteur, vue rowwise, liste."""
+"""`HEkkDual::updatePivots` — basis, factor, rowwise view, infeasibility list."""
 function update_pivots!(d::DualSolver)
     d.rebuild_reason != kRebuildReasonNo && return d
     e = d.engine
@@ -898,7 +893,7 @@ function update_pivots!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::shiftCost` — mémorise un shift de coût (jamais un vrai shift ici)."""
+"""`HEkkDual::shiftCost` — record cost shift (never a true shift here)."""
 function shift_cost!(d::DualSolver, iCol::Int, amount::Float64)
     info = d.engine.info
     info.costs_shifted = true
@@ -907,7 +902,7 @@ function shift_cost!(d::DualSolver, iCol::Int, amount::Float64)
     return d
 end
 
-"""`HEkkDual::shiftBack` — annule le shift de coût de la variable sortante."""
+"""`HEkkDual::shiftBack` — undo cost shift on outgoing variable."""
 function shift_back!(d::DualSolver, iCol::Int)
     info = d.engine.info
     if info.workShift[iCol] != 0.0
@@ -918,9 +913,9 @@ function shift_back!(d::DualSolver, iCol::Int)
 end
 
 """
-`HEkkDual::computeDualInfeasibilitiesWithFixedVariableFlips` — compte les
-infaisabilités duales selon les bornes de travail (les variables fixes, de
-mouvement nul, ne comptent pas).
+`HEkkDual::computeDualInfeasibilitiesWithFixedVariableFlips` — counts
+dual infeasibilities based on working bounds (fixed variables with zero
+movement do not count).
 """
 function compute_dual_infeasibilities_with_fixed_variable_flips!(d::DualSolver)
     e = d.engine
@@ -954,9 +949,9 @@ function compute_dual_infeasibilities_with_fixed_variable_flips!(d::DualSolver)
 end
 
 """
-`HEkkDual::correctDualInfeasibilities` — supprime les infaisabilités duales :
-flip des fixes (et des boxées hors `force_phase2`), shift tiré au hasard sinon.
-Rend le nombre d'infaisabilités restantes (variables libres) dans
+`HEkkDual::correctDualInfeasibilities` — removes dual infeasibilities:
+flip fixed (and boxed outside `force_phase2`), randomly drawn shift otherwise.
+Returns count of remaining infeasibilities (free variables) in
 `d.dual_infeas_count`.
 """
 function correct_dual_infeasibilities!(d::DualSolver)
@@ -991,9 +986,9 @@ function correct_dual_infeasibilities!(d::DualSolver)
             flip_objective_change += move * flip * current_dual * e.cost_scale
             continue
         end
-        # Unilatérale (ou boxée en force_phase2) : shift de coût aléatoire.
+        # Unilateral (or boxed in force_phase2): random cost shift.
         info.allow_cost_shifting ||
-            error("DualSolver : shift de coût interdit mais nécessaire")
+            error("DualSolver: cost shifting disallowed but required")
         info.costs_shifted = true
         if move == kNonbasicMoveUp
             new_dual = (1 + fraction(random)) * tolerance
@@ -1014,9 +1009,9 @@ function correct_dual_infeasibilities!(d::DualSolver)
 end
 
 """
-`HEkkDual::assessPhase1Optimality` : optimal en phase 1 avec objectif dual non
-nul. Sans perturbation de coûts, on conclut directement sur les infaisabilités
-duales du LP (phase 2, ou infaisabilité duale).
+`HEkkDual::assessPhase1Optimality`: optimal in phase 1 with nonzero dual
+objective. Without cost perturbation, concludes directly on LP dual
+infeasibilities (phase 2, or dual infeasibility).
 """
 function assess_phase1_optimality!(d::DualSolver)
     e = d.engine
@@ -1029,8 +1024,8 @@ function assess_phase1_optimality!(d::DualSolver)
     end
     assess_phase1_optimality_unperturbed!(d)
     if d.dual_infeas_count > 0
-        # Le retour en phase 1 est déjà en place : les valeurs primales doivent
-        # changer, la faisabilité primale est inconnue.
+        # Return to phase 1 already in place: primal values must change,
+        # primal feasibility is unknown.
         @assert d.solve_phase == kSolvePhase1
     elseif d.solve_phase == kSolvePhase2
         exit_phase1_reset_duals!(d)
@@ -1038,7 +1033,7 @@ function assess_phase1_optimality!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::assessPhase1OptimalityUnperturbed` (coûts non perturbés)."""
+"""`HEkkDual::assessPhase1OptimalityUnperturbed` (unperturbed costs)."""
 function assess_phase1_optimality_unperturbed!(d::DualSolver)
     e = d.engine
     info = e.info
@@ -1060,7 +1055,7 @@ function assess_phase1_optimality_unperturbed!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::exitPhase1ResetDuals` — duals des libres ramenés à zéro."""
+"""`HEkkDual::exitPhase1ResetDuals` — duals of free variables reset to zero."""
 function exit_phase1_reset_duals!(d::DualSolver)
     e = d.engine
     info = e.info
@@ -1091,8 +1086,8 @@ function exit_phase1_reset_duals!(d::DualSolver)
 end
 
 """
-`HEkkDual::assessPossiblyDualUnbounded` — preuve d'infaisabilité primale ; si
-elle échoue, la source marque un tabou (backtracking M3c) : ici, erreur.
+`HEkkDual::assessPossiblyDualUnbounded` — proof of primal infeasibility; if
+it fails, source marks a taboo (backtracking M3c).
 """
 function assess_possibly_dual_unbounded!(d::DualSolver)
     @assert d.rebuild_reason == kRebuildReasonPossiblyDualUnbounded
@@ -1102,8 +1097,8 @@ function assess_possibly_dual_unbounded!(d::DualSolver)
         d.solve_phase = kSolvePhaseExit
         d.engine.model_status = kInfeasible
     else
-        # Preuve non concluante : le changement de base est rendu tabou et la
-        # reconstruction reprend sans lui (la source fait de même).
+        # Inconclusive proof: basis change is marked taboo and rebuild
+        # resumes without it (matching HiGHS source).
         add_bad_basis_change!(d.engine, d.row_out, d.variable_out,
             d.variable_in, kBadBasisChangeFailedInfeasibilityProof, true)
         d.rebuild_reason = kRebuildReasonNo
@@ -1111,13 +1106,13 @@ function assess_possibly_dual_unbounded!(d::DualSolver)
     return d
 end
 
-"""`HEkkDual::bailoutOnDualObjective` (limite d'objectif non portée)."""
+"""`HEkkDual::bailoutOnDualObjective` (objective limit not ported)."""
 function bailout_on_dual_objective!(d::DualSolver)
     e = d.engine
     e.solve_bailout && return true
     if e.lp.sense == kMinimize && d.solve_phase == kSolvePhase2 &&
        e.info.updated_dual_objective_value > e.options.objective_bound
-        error("DualSolver : limite d'objectif non portée (M5)")
+        error("DualSolver: objective limit not ported (M5)")
     end
     return e.solve_bailout
 end

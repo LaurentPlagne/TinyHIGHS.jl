@@ -1,12 +1,11 @@
-# Portage de `util/HighsRandom.{h,cpp}` (licence MIT, HiGHS) : RNG à état unique
-# (xorshift + `pair_hash`). L'état est **consommé de façon déterministe** par le
-# simplexe (`initialiseSimplexLpRandomVectors`, puis `chooseNormal` tire l'ordre
-# de balayage des rangées, `correctDualInfeasibilities` les shifts) : toute
-# divergence d'état change le chemin et les compteurs d'itérations.
+# Port of `util/HighsRandom.{h,cpp}` (MIT License, HiGHS): single-state RNG
+# (xorshift + `pair_hash`). The state is **deterministically consumed** by the
+# simplex (`initialiseSimplexLpRandomVectors`, then `chooseNormal` samples row
+# scan order, `correctDualInfeasibilities` shifts): any state divergence changes
+# path and iteration counts.
 #
-# `pair_hash<k>(a, b) = (a + c[2k]) * (b + c[2k+1])` en arithmétique 64 bits
-# enveloppante (l'énumération des indices est recopiée telle quelle, y compris
-# l'absence de `k = 8`).
+# `pair_hash<k>(a, b) = (a + c[2k]) * (b + c[2k+1])` in 64-bit wrapping arithmetic
+# (the constant index enumeration is copied as is, including the absence of `k = 8`).
 
 const kHighsHashConstants = UInt64[
     0xc8497d2a400d9551, 0x80c8963be3e4c2f3, 0x042d8680e260ae5b,
@@ -32,21 +31,21 @@ const kHighsHashConstants = UInt64[
     0x5abe6ad9d131e631, 0xbe10136a522e602d, 0x53671115c340e779,
     0x9f392fe43e2144da]
 
-"""`HighsHashHelpers::pair_hash<k>` (indices de constantes 1-based)."""
+"""`HighsHashHelpers::pair_hash<k>` (constant indices 1-based)."""
 pair_hash(k::Int, a::UInt32, b::UInt32) =
     (UInt64(a) + kHighsHashConstants[2k + 1]) *
     (UInt64(b) + kHighsHashConstants[2k + 2])
 
 log2i(n::UInt64) = 63 - leading_zeros(n)
 
-"""Séquence des `k` essayés par `drawUniform` (8 est absent, comme la source)."""
+"""Sequence of `k` tried by `drawUniform` (8 is missing, matching the source)."""
 const kDrawUniformIndices = (0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15,
     16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31)
 
 """
     HighsRandom(seed = 0)
 
-Générateur de HiGHS (`HighsRandom`) : état 64 bits, xorshift + hachage.
+HiGHS generator (`HighsRandom`): 64-bit state, xorshift + hashing.
 """
 mutable struct HighsRandom
     state::UInt64
@@ -66,7 +65,7 @@ function initialise!(r::HighsRandom, seed::Integer=0)
     return r
 end
 
-"""`HighsRandom::advance` — xorshift 64 bits."""
+"""`HighsRandom::advance` — 64-bit xorshift."""
 function advance!(r::HighsRandom)
     s = r.state
     s ⊻= s >> 12
@@ -89,16 +88,16 @@ function draw_uniform(r::HighsRandom, sup::UInt32, nbits::Int)
     end
 end
 
-"""`HighsRandom::integer(sup)` — tirage uniforme dans `[0, sup)`."""
+"""`HighsRandom::integer(sup)` — uniform draw in `[0, sup)`."""
 function integer(r::HighsRandom, sup::Int)
     sup <= 1 && return 0
     nbits = log2i(UInt64(sup - 1)) + 1
-    # `sup` reste sous 2^31 dans le simplexe (rangées/colonnes) : voie 32 bits.
+    # `sup` remains below 2^31 in the simplex (rows/columns): 32-bit path.
     nbits <= 32 && return Int(draw_uniform(r, UInt32(sup), nbits))
-    error("HighsRandom.integer : tirage 64 bits non porté (sup = $sup)")
+    error("HighsRandom.integer : 64-bit draw not implemented (sup = $sup)")
 end
 
-"""`HighsRandom::fraction` — réel dans `(0, 1)`."""
+"""`HighsRandom::fraction` — real in `(0, 1)`."""
 function fraction(r::HighsRandom)
     advance!(r)
     lo = UInt32(r.state & 0xffffffff)
@@ -108,7 +107,7 @@ function fraction(r::HighsRandom)
     return Float64(1 + output) * 2.2204460492503125e-16
 end
 
-"""`HighsRandom::shuffle` sur un vecteur 1-based."""
+"""`HighsRandom::shuffle` on a 1-based vector."""
 function shuffle!(r::HighsRandom, data::Vector{Int})
     for i ∈ length(data):-1:2
         pos = integer(r, i) + 1
@@ -117,11 +116,10 @@ function shuffle!(r::HighsRandom, data::Vector{Int})
     return data
 end
 
-# --- `HighsHashHelpers` (détection de cyclage) ------------------------------
+# --- `HighsHashHelpers` (cycling detection) ------------------------------
 #
-# Le hachage de base est un polynôme évalué modulo le premier de Mersenne
-# `2^61-1` ; les fonctions prennent l'indice **0-based** de la source (le port,
-# 1-based, convertit avant l'appel).
+# Base hash is a polynomial evaluated modulo Mersenne prime `2^61-1`; functions
+# take the **0-based** source index (this 1-based port converts prior to calling).
 
 const kM61 = UInt64(0x1fffffffffffffff)
 

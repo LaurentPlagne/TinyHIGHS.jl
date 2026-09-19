@@ -1,24 +1,23 @@
-# Portage de `util/HighsCDouble.h` (licence MIT, HiGHS) : « quad precision »
-# par compensation (deux doubles `hi`, `lo`).
+# Port of `util/HighsCDouble.h` (MIT License, HiGHS): compensated quad precision
+# using two doubles (`hi`, `lo`).
 #
-# Sous-ensemble porté : construction depuis un double, conversion en double,
-# `+`, `-`, produits et comparaisons — ce qu'exigent
-# `proof_of_primal_infeasibility!` et le pricing quad d'`improveChooseColumnRow`
-# (`src/sparse_matrix.jl`). Les quotients (`/=`) et les arrondis (`floor`/`ceil`)
-# ne sont pas portés : aucun chemin utilisé ne les appelle.
+# Supported subset: construction from double, conversion to double, `+`, `-`,
+# products, and comparisons — as required by `proof_of_primal_infeasibility!`
+# and quad-precision pricing in `improveChooseColumnRow` (`src/sparse_matrix.jl`).
+# Division (`/=`) and rounding (`floor`/`ceil`) are omitted as unused.
 #
-# Le type est **immuable** (la source est un value type) : `Vector{CDouble}` est
-# alors un tableau de bits (pas d'objet alloué par élément), ce qui permet le
-# tampon de somme `SparseVectorSum` sans allocation.
+# The struct is immutable (matching the C++ value type): `Vector{CDouble}` is
+# therefore stored inline without per-element heap allocation, enabling zero-allocation
+# accumulator buffers in `SparseVectorSum`.
 #
-# Les algorithmes (`two_sum`, `split`, `two_product`) suivent Rump, « High
-# precision evaluation of nonlinear functions » (2005), transcrits de la
-# source — ordre des arguments compris (le terme de compensation en dépend).
+# Algorithms (`two_sum`, `split`, `two_product`) follow Rump, "High precision
+# evaluation of nonlinear functions" (2005), transcribed directly from upstream,
+# including argument order (upon which error compensation terms depend).
 
 """
     CDouble(value)
 
-`HighsCDouble` : valeur et terme de compensation, `hi + lo ≈ value`.
+`HighsCDouble`: value and error compensation term, `hi + lo ≈ value`.
 """
 struct CDouble
     hi::Float64
@@ -31,7 +30,7 @@ Base.Float64(x::CDouble) = x.hi + x.lo
 
 Base.zero(::Type{CDouble}) = CDouble(0.0)
 
-"""`HighsCDouble::two_sum` — `x + y = a + b` exactement, `x = fl(a + b)`."""
+"""`HighsCDouble::two_sum` — exact `x + y = a + b`, with `x = fl(a + b)`."""
 function two_sum(a::Float64, b::Float64)
     x = a + b
     z = x - a
@@ -39,7 +38,7 @@ function two_sum(a::Float64, b::Float64)
     return x, y
 end
 
-"""`HighsCDouble::split` — 53 bits en deux parties de 26 bits (`x + y = a`)."""
+"""`HighsCDouble::split` — splits 53 bits into two 26-bit parts (`x + y = a`)."""
 function split(a::Float64)
     factor = Float64((1 << 27) + 1)
     c = factor * a
@@ -48,7 +47,7 @@ function split(a::Float64)
     return x, y
 end
 
-"""`HighsCDouble::two_product` — `x + y = a * b` exactement."""
+"""`HighsCDouble::two_product` — exact `x + y = a * b`."""
 function two_product(a::Float64, b::Float64)
     x = a * b
     a1, a2 = split(a)
@@ -84,8 +83,8 @@ Base.:-(x::CDouble) = CDouble(-x.hi, -x.lo)
 
 function Base.:*(x::CDouble, v::Float64)
     hi, lo = two_product(x.hi, v)
-    # `res += lo * v` dans la source : renormalisation par `operator+=(double)`,
-    # pas une simple accumulation dans `lo`.
+    # `res += lo * v` in upstream: renormalized via `operator+=(double)`,
+    # not simple accumulation into `lo`.
     return CDouble(hi, lo) + x.lo * v
 end
 
@@ -96,8 +95,8 @@ end
 
 Base.:*(v::Float64, x::CDouble) = x * v
 
-# La source compare les valeurs (`double(*this) == double(other)`), pas les
-# champs : deux représentations différentes d'un même nombre sont égales.
+# Upstream compares values (`double(*this) == double(other)`), not raw fields:
+# distinct representations of the same real number compare equal.
 Base.:(==)(x::CDouble, y::CDouble) = Float64(x) == Float64(y)
 Base.:(==)(x::CDouble, v::Float64) = Float64(x) == v
 Base.:(==)(v::Float64, x::CDouble) = v == Float64(x)

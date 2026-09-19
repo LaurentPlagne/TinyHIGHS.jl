@@ -1,21 +1,16 @@
-# Portage partiel de `simplex/HEkk.{h,cpp}` (licence MIT, HiGHS) — tranche M3a
-# « état et valeurs ». Voir docs/architecture/portage-julia-simplexe-highs.md §3.
+# Port of `simplex/HEkk.{h,cpp}` (MIT License, HiGHS).
 #
-# Porté : `setBasis` (base logique), `setNonbasicMove`, `initialiseLpColBound`/
+# Core revised simplex state, values, factorization, updates, and solve routines:
+# `setBasis` (logical basis), `setNonbasicMove`, `initialiseLpColBound`/
 # `initialiseLpRowBound`/`initialiseBound`, `initialiseLpColCost`/
 # `initialiseLpRowCost`/`initialiseCost`, `initialiseNonbasicValueAndMove`,
-# `computePrimal`, `computeDual`, `fullBtran`/`fullPrice`, objectifs primal et
-# dual.
+# `computePrimal`, `computeDual`, `fullBtran`/`fullPrice`, primal and dual objectives,
+# basis rebuilding and reinversion, dual steepest edge (DSE) weights.
 #
-# Non porté (M3b/M3c) : itérations duales/primales, choix de rangée et de
-# colonne, DSE/Devex, perturbations et shifts, ré-inversions. La perturbation
-# aléatoire (bornes primales, coûts duaux) exige `numTotRandomValue_` (RNG
-# HiGHS) : la branche lève une erreur explicite plutôt que d'être ignorée.
-#
-# Le système résolu est celui de HiGHS : chaque ligne porte une variable
-# logique `s = -a_i x`, de bornes `[-row_upper, -row_lower]`, si bien que
-# `[A I] [x; s] = 0` — le second membre du LP est porté par les bornes des
-# logiques, pas par un vecteur b.
+# The solved system follows the HiGHS convention: each row carries a slack
+# (logical) variable `s = -a_i x`, with bounds `[-row_upper, -row_lower]`, such that
+# `[A I] [x; s] = 0` — the RHS of the LP is represented via the bounds of the
+# logicals, not via a separate vector b.
 
 """
     SimplexLp(num_col, num_row, a_matrix, col_cost, col_lower, col_upper,
@@ -176,11 +171,11 @@ mutable struct SimplexEngine
     status::SimplexStatus
     random::HighsRandom
     iteration_count::Int
-    # Compteur du solve courant : `HApp::solveLpSimplex` recopie
-    # `highs_info.simplex_iteration_count` (remis à zéro par `Highs::run`)
-    # dans `ekk_instance.iteration_count_` à chaque résolution, ce qui rend
-    # `simplex_iteration_limit` **par solve** alors que `iteration_count` du
-    # port est cumulé (comme `highs_info`, qui sert au rapport).
+    # Current solve iteration counter: `HApp::solveLpSimplex` copies
+    # `highs_info.simplex_iteration_count` (reset to zero by `Highs::run`)
+    # into `ekk_instance.iteration_count_` on each resolve, making
+    # `simplex_iteration_limit` apply **per solve** while `iteration_count`
+    # in this port is cumulative (like `highs_info`, used for reporting).
     iteration_count0::Int
     total_synthetic_tick::Float64
     build_synthetic_tick::Float64
@@ -196,13 +191,13 @@ mutable struct SimplexEngine
     previous_iteration_cycling_detected::Int
     bad_basis_change::Vector{BadBasisChange}
     primal_ray_record::RayRecord
-    # `Highs::run` : bornes significativement incohérentes, le LP est déclaré
-    # infaisable sans toucher au simplexe (état posé par `initialise_for_solve!`).
+    # `Highs::run`: significantly inconsistent bounds lead to declaring the LP
+    # infeasible without invoking the simplex (flag set by `initialise_for_solve!`).
     bounds_infeasible::Bool
-    # `HighsBasis basis_` du niveau Highs : base rendue par le dernier solve,
-    # rafraîchie à chaque fin de résolution. Elle sert de warm start quand la
-    # base du Ekk a été jetée sans que le modèle change de base (changement de
-    # coefficient : `HEkk::clear` puis `HEkk::setBasis(basis_)`).
+    # `HighsBasis basis_` from Highs level: basis returned by the last solve,
+    # refreshed at the end of each resolve. Used for warm starting when the Ekk
+    # basis was invalidated without the model changing its basis (coefficient
+    # modification: `HEkk::clear` followed by `HEkk::setBasis(basis_)`).
     highs_basis::SimplexBasis
     highs_basis_valid::Bool
     primal_col::HVector
@@ -225,15 +220,15 @@ function SimplexEngine(lp::SimplexLp, options::SimplexOptions=SimplexOptions();
         (length(basis.basicIndex) == lp.num_row &&
          length(basis.nonbasicFlag) == lp.num_col + lp.num_row &&
          length(basis.nonbasicMove) == lp.num_col + lp.num_row) ||
-            throw(ArgumentError("base incompatible avec les dimensions du LP"))
+            throw(ArgumentError("basis dimensions incompatible with LP dimensions"))
     end
     info = SimplexInfo(lp.num_col, lp.num_row)
     factor = HFactor(lp.num_col, lp.num_row, lp.num_row, lp.a_matrix.start,
         lp.a_matrix.index, lp.a_matrix.value, basis.basicIndex)
     basis.basicIndex = factor.basic_index
     status = SimplexStatus()
-    # Une base fournie est une base : `initialise_for_solve!` ne doit pas la
-    # remplacer par la base logique. Son hachage se déduit de `nonbasicFlag`.
+    # A provided basis is valid: `initialise_for_solve!` must not replace it
+    # with the logical basis. Its hash is derived from `nonbasicFlag`.
     status.has_basis = provided_basis
     provided_basis && (basis.hash = basis_hash(basis))
     engine = SimplexEngine(lp, options, basis, info,
@@ -247,17 +242,16 @@ function SimplexEngine(lp::SimplexLp, options::SimplexOptions=SimplexOptions();
         zeros(Int, lp.num_row), zeros(50), zeros(Int, 50),
         zeros(Bool, lp.num_row), zeros(lp.num_col + lp.num_row),
         HighsRandom(1))
-    # `initialiseEkk` : options internes, RNG ré-initialisé, puis un premier
-    # tirage des vecteurs aléatoires (`initialiseSimplexLpRandomVectors`).
+    # `initialiseEkk`: internal options, RNG reinitialized, then initial draw
+    # of random vectors (`initialiseSimplexLpRandomVectors`).
     set_simplex_options!(engine)
     initialise_simplex_lp_random_vectors!(engine)
     return engine
 end
 
 """
-`HEkk::setSimplexOptions` et `updateSimplexOptions` — recopie statique des
-options dans l'espace de travail (le port ne modifie pas les options en cours
-de solve).
+`HEkk::setSimplexOptions` and `updateSimplexOptions` — static copy of options
+into workspace (the port does not modify options during solve).
 """
 function set_simplex_options!(e::SimplexEngine)
     info = e.info
@@ -268,9 +262,9 @@ function set_simplex_options!(e::SimplexEngine)
         e.options.dual_simplex_cost_perturbation_multiplier
     info.dual_edge_weight_strategy = e.options.simplex_dual_edge_weight_strategy
     info.price_strategy = e.options.simplex_price_strategy
-    # Les multiplicateurs de perturbation sont recopiés dans `info` comme dans
-    # la source : les chemins de nettoyage croisés (dual → primal, primal →
-    # dual) les mettent à zéro le temps d'un solve.
+    # Perturbation multipliers are copied into `info` as in the C++ source:
+    # crossover cleanup paths (dual → primal, primal → dual) set them to zero
+    # for the duration of a solve.
     info.factor_pivot_threshold = kDefaultPivotThreshold
     info.update_limit = e.options.simplex_update_limit
     return e
@@ -279,11 +273,10 @@ end
 """
     repaired_bounds(lower, upper, tolerance)
 
-Lambda `infeasibleBoundOk` de `Highs::infeasibleBoundsOk` : pour des bornes
-incohérentes (`lower > upper`) dont l'écart est sous la tolérance de
-faisabilité primale, la borne entière (au sens `x == round(x)`) est conservée
-et l'autre suit, sinon les deux sont ramenées à mi-chemin. Rend
-`(ok, lower, upper)`.
+Lambda `infeasibleBoundOk` from `Highs::infeasibleBoundsOk`: for inconsistent
+bounds (`lower > upper`) whose gap is within primal feasibility tolerance,
+the integer bound (in the sense `x == round(x)`) is preserved and the other
+follows, otherwise both are set to their midpoint. Returns `(ok, lower, upper)`.
 """
 function repaired_bounds(lower::Float64, upper::Float64, tolerance::Float64)
     (upper - lower) > -tolerance || return false, lower, upper
@@ -301,11 +294,10 @@ end
 """
     infeasible_bounds_ok!(e)
 
-`Highs::infeasibleBoundsOk` (sans intégralité ni rapport) : répare en place les
-bornes incohérentes sous tolérance et compte les incohérences significatives.
-Rend `false` s'il en reste : `Highs::run` déclare alors `kInfeasible` sans
-résoudre. Les lignes infectées sont comptées comme les colonnes (la source
-ignore la valeur de retour du lambda, mais compte par effet de bord).
+`Highs::infeasibleBoundsOk` (without integrality or reporting): repairs in-place
+inconsistent bounds within tolerance and counts significant inconsistencies.
+Returns `false` if any remain: `Highs::run` then declares `kInfeasible` without
+solving. Row bounds are checked identically to column bounds.
 """
 function infeasible_bounds_ok!(e::SimplexEngine)
     lp = e.lp
@@ -341,45 +333,44 @@ end
 """
     initialise_for_solve!(e)
 
-`HEkk::initialiseForSolve` (sous-ensemble M3b) : options internes, vecteurs
-aléatoires (consommés comme la source), base logique et facteur si absents,
-vue rowwise, coûts/bornes/valeurs, primal, dual, infaisabilités et objectifs.
-Le statut passe à `kOptimal` si le point de départ est déjà primal et dual
-faisable, et à `kInfeasible` (sans rien initialiser) si `Highs::run` rejette
-les bornes.
+`HEkk::initialiseForSolve`: internal options, pseudo-random vectors (consumed
+identically to C++ source), logical basis and factor if absent, row-wise matrix,
+costs/bounds/values, primal, dual, infeasibilities, and objectives.
+Status is set to `kOptimal` if the starting point is already primal and dual
+feasible, and to `kInfeasible` (without simplex initialization) if `Highs::run`
+rejects bounds.
 """
 function initialise_for_solve!(e::SimplexEngine)
-    # `HApp::solveLpSimplex` : le compteur de travail du solve repart de
-    # `highs_info.simplex_iteration_count` (zéro au début de chaque `Highs_run`)
-    # — c'est ce qui rend `simplex_iteration_limit` **par solve**.
+    # `HApp::solveLpSimplex`: solve iteration work counter restarts from
+    # `highs_info.simplex_iteration_count` (zero at the start of each `Highs_run`)
+    # — this makes `simplex_iteration_limit` apply **per solve**.
     e.iteration_count0 = e.iteration_count
-    # `Highs::run` : les bornes incohérentes sont réparées ou rendent le LP
-    # infaisable AVANT que le simplexe ne soit touché (ni options, ni RNG).
+    # `Highs::run`: inconsistent bounds are repaired or render the LP
+    # infeasible BEFORE simplex is invoked (neither options nor RNG touched).
     if !infeasible_bounds_ok!(e)
         e.bounds_infeasible = true
         e.model_status = kInfeasible
         return e
     end
     e.bounds_infeasible = false
-    # `HApp::solveLpSimplex` : échelles LP avant `moveLp` (le LP peut être
-    # ré-échelonné, les facteurs connus ré-appliqués, ou retirés).
+    # `HApp::solveLpSimplex`: LP scaling before `moveLp` (the LP may be
+    # rescaled, known scale factors reapplied, or cleared).
     consider_scaling!(e)
-    # `HEkk::setNlaPointersForLpAndScale` : les conversions NLA ne servent
-    # qu'à pontifier un LP NON échelonné dont le facteur est échelonné. Ici
-    # le LP est échelonné et le facteur aussi : les échelles sont déjà dans
-    # le modèle (et dans `apply_lp_scale!`), les conversions doivent être
-    # inactives (`scale_ == NULL`).
+    # `HEkk::setNlaPointersForLpAndScale`: NLA conversions are only needed
+    # when bridging an unscaled LP with a scaled factor. Here the LP is scaled
+    # and so is the factor: scales are already in the model (and in
+    # `apply_lp_scale!`), conversions must be inactive (`scale_ == NULL`).
     e.nla.scale = e.lp.scale.has_scaling && !e.lp.is_scaled ? e.lp.scale :
                   nothing
     set_simplex_options!(e)
-    # `HEkk::solve` : `initialiseControl` avant `initialiseForSolve` (le dual
-    # l'appelle aussi dans `solve!`, sans effet entre-temps).
+    # `HEkk::solve`: `initialiseControl` before `initialiseForSolve` (dual
+    # also calls it in `solve!`, without effect in between).
     initialise_control!(e)
     initialise_simplex_lp_random_vectors!(e)
     if !e.status.has_basis
         if e.highs_basis_valid
-            # `HApp::solveLpSimplex` : base du Ekk jetée mais `basis_` valide
-            # (changement de coefficient) — `HEkk::setBasis`.
+            # `HApp::solveLpSimplex`: Ekk basis cleared but `basis_` valid
+            # (coefficient change) — `HEkk::setBasis`.
             restore_basis!(e, e.highs_basis)
         else
             set_basis!(e)
@@ -388,9 +379,8 @@ function initialise_for_solve!(e::SimplexEngine)
     if !e.status.has_invert
         rank_deficiency = compute_factor!(e)
         if rank_deficiency != 0
-            # Base de départ singulière : le facteur l'a complétée par des
-            # logiques ; on synchronise la base et on poursuit (comme
-            # `initialiseSimplexLpBasisAndFactor`).
+            # Singular starting basis: factor completed with logicals;
+            # synchronize basis and proceed (like `initialiseSimplexLpBasisAndFactor`).
             handle_rank_deficiency!(e)
             set_nonbasic_move!(e)
             e.status.has_basis = true
@@ -407,9 +397,9 @@ function initialise_for_solve!(e::SimplexEngine)
     compute_simplex_infeasible!(e)
     compute_dual_objective_value!(e)
     compute_primal_objective_value!(e)
-    # Comme `HEkk::initialiseForSolve` : le statut est remis à `kNotset` avant
-    # le test d'optimalité (sinon un `kOptimal` d'une résolution précédente
-    # survit à un modèle modifié et le solve est sauté).
+    # As in `HEkk::initialiseForSolve`: status reset to `kNotset` before optimality
+    # test (otherwise a `kOptimal` from a previous solve survives on a modified
+    # model and the solve is skipped).
     e.model_status = kNotset
     if e.info.num_primal_infeasibilities == 0 &&
        e.info.num_dual_infeasibilities == 0
@@ -422,16 +412,15 @@ function initialise_for_solve!(e::SimplexEngine)
 end
 
 ##############################################################################
-# Modifications du LP entre deux résolutions (M5)
+# LP modifications between resolves
 #
-# Contrat de la source : les modifications passent par le LP (`HighsLp`) puis
-# `HEkk::updateStatus(LpAction)` invalide ce qui doit l'être. Un changement de
-# borne ou de coût **conserve la base** (warm start), un changement de
-# coefficient efface tout l'état (`HEkk::clear`, la prochaine résolution
-# repart de la base logique).
+# Source contract: modifications pass through the LP (`HighsLp`), then
+# `HEkk::updateStatus(LpAction)` invalidates necessary state. A bound or cost
+# change **preserves the basis** (warm start); a matrix coefficient change
+# wipes all state (`HEkk::clear`, next solve restarts from logical basis).
 ##############################################################################
 
-"""`HEkk::invalidateBasisArtifacts` — jette base, facteur et caches associés."""
+"""`HEkk::invalidateBasisArtifacts` — clears basis, factor, and associated caches."""
 function invalidate_basis_artifacts!(e::SimplexEngine)
     e.status.has_ar_matrix = false
     e.status.has_dual_steepest_edge_weights = false
@@ -458,8 +447,8 @@ function invalidate_basis_matrix!(e::SimplexEngine)
 end
 
 """
-`HEkk::clear` (sans le LP, qui reste le modèle muté) : tout l'état du simplexe
-est jeté, la prochaine `initialise_for_solve!` repart de la base logique.
+`HEkk::clear` (without the LP, which remains the mutated model): simplex state
+is cleared, next `initialise_for_solve!` restarts from the logical basis.
 """
 function clear_ekk!(e::SimplexEngine)
     invalidate_basis_matrix!(e)
@@ -472,13 +461,13 @@ end
 """
     update_status!(e, action)
 
-`HEkk::updateStatus` : conséquences d'une modification du LP.
+`HEkk::updateStatus`: handles side effects of LP modifications.
 
-- `kLpActionScale` : la base et le NLA deviennent caducs (l'espace change) ;
-- `kLpActionNewCosts`, `kLpActionNewBounds` : la base est conservée (warm
-  start), mais le rebuild et les objectifs sont à refaire ;
-- `kLpActionNewBasis` : la base est jetée ;
-- `kLpActionNewRows` : tout l'état est jeté (changement de coefficient).
+- `kLpActionScale`: basis and NLA become invalid (scaled space changed);
+- `kLpActionNewCosts`, `kLpActionNewBounds`: basis is preserved (warm start),
+  but rebuild and objective values must be recomputed;
+- `kLpActionNewBasis`: basis is discarded;
+- `kLpActionNewRows`: entire state is discarded (matrix coefficient change).
 """
 function update_status!(e::SimplexEngine, action::Int)
     if action == kLpActionScale
@@ -492,15 +481,14 @@ function update_status!(e::SimplexEngine, action::Int)
     elseif action == kLpActionNewRows
         clear_ekk!(e)
     else
-        error("SimplexEngine : action LP $action non portée (M5)")
+        error("SimplexEngine: LP action $action not implemented")
     end
     return e
 end
 
-# Les bornes incohérentes ne sont pas refusées ici : `assessBounds` de la
-# source se contente d'un avertissement et laisse le LP les porter ;
-# `infeasible_bounds_ok!` les répare ou rend le LP infaisable à la résolution.
-# Seul le clamp `infinite_bound` (1e30) d'`assessBounds` n'est pas porté.
+# Inconsistent bounds are not rejected here: `assessBounds` in C++ source
+# simply issues a warning and lets the LP carry them; `infeasible_bounds_ok!`
+# repairs them or declares the LP infeasible during solve.
 
 """
     change_col_bounds!(e::SimplexEngine, iCol::Int, lower::Float64, upper::Float64)
@@ -601,17 +589,17 @@ end
 """
     change_coeff!(e, iRow, iCol, value)
 
-`Highs_changeCoeff` : un coefficient de la matrice (CSC). Un coefficient
-inférieur ou égal à `small_matrix_value` est traité comme nul : il supprime
-l'entrée existante, et une entrée absente n'est pas créée. Un vrai changement
-invalide tout l'état (`HEkk::updateStatus(kNewRows)` → `clear`).
+`Highs_changeCoeff`: modifies a constraint matrix coefficient (CSC format).
+A coefficient magnitude below or equal to `small_matrix_value` is treated as zero:
+it removes the existing entry, and a missing entry is not inserted. A true change
+invalidates the entire state (`HEkk::updateStatus(kNewRows)` → `clear`).
 """
 function change_coeff!(e::SimplexEngine, iRow::Int, iCol::Int, value::Float64)
     lp = e.lp
     (1 <= iRow <= lp.num_row && 1 <= iCol <= lp.num_col) ||
-        throw(ArgumentError("coefficient ($iRow, $iCol) hors du LP"))
+        throw(ArgumentError("coefficient ($iRow, $iCol) out of LP bounds"))
     m = lp.a_matrix
-    is_colwise(m) || error("change_coeff! exige la vue colwise")
+    is_colwise(m) || error("change_coeff! requires column-wise matrix")
     zero_new_value = abs(value) <= e.options.small_matrix_value
     change_el = 0
     for iEl ∈ m.start[iCol]:(m.start[iCol + 1] - 1)
@@ -621,7 +609,7 @@ function change_coeff!(e::SimplexEngine, iRow::Int, iCol::Int, value::Float64)
         end
     end
     if change_el == 0
-        # Pas de non nul existant : un petit coefficient est ignoré.
+        # No existing non-zero: small coefficient is ignored.
         if !zero_new_value
             insert!(m.index, m.start[iCol + 1], iRow)
             insert!(m.value, m.start[iCol + 1], value)
@@ -630,7 +618,7 @@ function change_coeff!(e::SimplexEngine, iRow::Int, iCol::Int, value::Float64)
             end
         end
     elseif zero_new_value
-        # Le coefficient annule un non nul existant : le retirer.
+        # Coefficient zeroes an existing non-zero: remove it.
         deleteat!(m.index, change_el)
         deleteat!(m.value, change_el)
         for i ∈ (iCol + 1):(lp.num_col + 1)
@@ -640,16 +628,15 @@ function change_coeff!(e::SimplexEngine, iRow::Int, iCol::Int, value::Float64)
         m.index[change_el] = iRow
         m.value[change_el] = value
     end
-    # La source invalide l'état même si le coefficient n'a pas bougé.
+    # C++ source invalidates status even if coefficient did not change.
     update_status!(e, kLpActionNewRows)
     return e
 end
 
 """
-`HEkk::initialiseSimplexLpRandomVectors` : permutations aléatoires des indices
-et `numTotRandomValue`. L'état du RNG est consommé dans l'ordre de la source
-(colonnes, puis toutes les variables, puis les réels) : c'est lui qui fixe
-l'ordre de balayage de CHUZR.
+`HEkk::initialiseSimplexLpRandomVectors`: pseudo-random index permutations
+and `numTotRandomValue`. Consumed in the exact order of the C++ source
+(columns, then all variables, then fractions): determines the scan order for CHUZR.
 """
 function initialise_simplex_lp_random_vectors!(e::SimplexEngine)
     num_col = e.lp.num_col
@@ -678,32 +665,30 @@ function initialise_simplex_lp_random_vectors!(e::SimplexEngine)
 end
 
 """
-Mouvement non basique déduit des seules bornes — corps commun de
-`HEkk::setBasis` et `HEkk::setNonbasicMove`. La branche `have_solution` de
-`setNonbasicMove` est constante (`false`) dans la source : elle n'est pas
-portée. Toute combinaison de bornes est couverte, `kIllegalMoveValue` ne peut
-pas être rendu.
+Nonbasic move deduced solely from bounds — shared core of
+`HEkk::setBasis` and `HEkk::setNonbasicMove`.
+All bound combinations are covered; `kIllegalMoveValue` is never returned.
 """
 function nonbasic_move_from_bounds(lower::Float64, upper::Float64)
     if lower == upper
-        return kNonbasicMoveZe                      # fixe
+        return kNonbasicMoveZe                      # fixed
     elseif lower > -kHighsInf
         if upper < kHighsInf
-            # Boxée : borne la plus proche de zéro (le C++ compare |lower|<|upper|).
+            # Boxed: bound closest to zero (C++ compares |lower| < |upper|).
             return abs(lower) < abs(upper) ? kNonbasicMoveUp : kNonbasicMoveDn
         end
-        return kNonbasicMoveUp                      # minorée
+        return kNonbasicMoveUp                      # lower bounded
     elseif upper < kHighsInf
-        return kNonbasicMoveDn                      # majorée
+        return kNonbasicMoveDn                      # upper bounded
     end
-    return kNonbasicMoveZe                          # libre
+    return kNonbasicMoveZe                          # free
 end
 
 """
     set_basis!(e)
 
-Base logique (`HEkk::setBasis`) : colonnes non basiques, logiques basiques
-(`basicIndex[iRow] = num_col + iRow`). Le `hash` de la source n'est pas porté.
+Logical basis (`HEkk::setBasis`): nonbasic columns, basic slacks
+(`basicIndex[iRow] = num_col + iRow`).
 """
 function set_basis!(e::SimplexEngine)
     lp, basis = e.lp, e.basis
@@ -727,10 +712,10 @@ end
 """
     handle_rank_deficiency!(e)
 
-`HEkk::handleRankDeficiency` : le facteur a déjà complété une base singulière
-avec des variables logiques (`buildHandleRankDeficiency`/`buildMarkSingC`) ;
-on synchronise les drapeaux, on rend le changement tabou (raison `kSingular`)
-et on invalide la vue rowwise.
+`HEkk::handleRankDeficiency`: factor has completed a singular basis
+with logical variables (`buildHandleRankDeficiency`/`buildMarkSingC`);
+flags are synchronized, the change is marked taboo (`kSingular`),
+and the row-wise view is invalidated.
 """
 function handle_rank_deficiency!(e::SimplexEngine)
     factor = e.nla.factor
@@ -749,20 +734,20 @@ function handle_rank_deficiency!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::logicalBasis` — toutes les variables de base sont des logiques."""
+"""`HEkk::logicalBasis` — all basic variables are logical (slack) variables."""
 function logical_basis(e::SimplexEngine)
     return all(iRow -> e.basis.basicIndex[iRow] > e.lp.num_col,
         1:e.lp.num_row)
 end
 
 """
-`HEkk::setBasis(const HighsBasis&)` : installe `from` dans la base partagée
-(recopie en place, `basicIndex` reste le tableau du facteur et du NLA).
+`HEkk::setBasis(const HighsBasis&)`: installs `from` into the shared basis
+(in-place copy, `basicIndex` remains the buffer of the factor and NLA).
 """
 function restore_basis!(e::SimplexEngine, from::SimplexBasis)
     basis = e.basis
     length(basis.basicIndex) == length(from.basicIndex) ||
-        throw(ArgumentError("base de tailles différentes"))
+        throw(ArgumentError("basis sizes mismatch"))
     copyto!(basis.basicIndex, from.basicIndex)
     copyto!(basis.nonbasicFlag, from.nonbasicFlag)
     copyto!(basis.nonbasicMove, from.nonbasicMove)
@@ -772,9 +757,9 @@ function restore_basis!(e::SimplexEngine, from::SimplexBasis)
 end
 
 """
-`HApp::solveLpSimplex` (fin de résolution) : `basis_ = getHighsBasis(ekk)` —
-la base rendue devient la base mémorisée du niveau Highs, utilisée au prochain
-solve si celle du Ekk a été jetée.
+`HApp::solveLpSimplex` (post-solve): `basis_ = getHighsBasis(ekk)` —
+returned basis becomes the cached basis of the Highs level, used on next
+solve if the Ekk basis was invalidated.
 """
 function store_solution_basis!(e::SimplexEngine)
     if e.status.has_basis
@@ -784,13 +769,13 @@ function store_solution_basis!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::clearRayRecords` — oublie le rayon primal (`clear` de `HighsRayRecord`)."""
+"""`HEkk::clearRayRecords` — clears primal ray record (`clear` of `HighsRayRecord`)."""
 function clear_ray_records!(e::SimplexEngine)
     clear!(e.primal_ray_record)
     return e
 end
 
-"""Hachage d'une base quelconque : combinaison des variables basiques."""
+"""Basis hash: combination of basic variable indices."""
 function basis_hash(basis::SimplexBasis)
     hash = UInt64(0)
     for iVar ∈ eachindex(basis.nonbasicFlag)
@@ -804,9 +789,9 @@ end
 """
     set_nonbasic_move!(e)
 
-`HEkk::setNonbasicMove` : recalcule `nonbasicMove` de toutes les variables à
-partir des bornes du **LP** (pas celles de l'espace de travail), sans toucher
-aux valeurs. Une variable basique reçoit `kNonbasicMoveZe`.
+`HEkk::setNonbasicMove`: recomputes `nonbasicMove` for all variables from
+the **LP** bounds (not the workspace bounds), without modifying values.
+A basic variable receives `kNonbasicMoveZe`.
 """
 function set_nonbasic_move!(e::SimplexEngine)
     lp, basis = e.lp, e.basis
@@ -827,7 +812,7 @@ function set_nonbasic_move!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::initialiseLpColBound` — bornes colonnes de l'espace de travail."""
+"""`HEkk::initialiseLpColBound` — workspace column bounds."""
 function initialise_lp_col_bound!(e::SimplexEngine)
     lp, info = e.lp, e.info
     @inbounds for iCol ∈ 1:lp.num_col
@@ -840,7 +825,7 @@ function initialise_lp_col_bound!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::initialiseLpRowBound` — bornes logiques `[-row_upper, -row_lower]`."""
+"""`HEkk::initialiseLpRowBound` — logical bounds `[-row_upper, -row_lower]`."""
 function initialise_lp_row_bound!(e::SimplexEngine)
     lp, info = e.lp, e.info
     num_col = lp.num_col
@@ -858,13 +843,11 @@ end
 """
     initialise_bound!(e, algorithm, solve_phase; perturb = false)
 
-`HEkk::initialiseBound` : bornes de l'espace de travail depuis le LP, puis,
-pour le simplexe dual hors phase 2, bornes spéciales
-`[-1000, 1000]`/`[-1, 0]`/`[0, 1]`/`[0, 0]` qui font de l'objectif dual
-l'opposé de la somme des infaisabilités. Pour le simplexe primal, la
-perturbation aléatoire des bornes (base `multiplicateur · 5e-7`, relative à la
-borne, absolue si `|borne| < 1`) écarte les bornes finies ; une variable fixe
-non basique est laissée intacte.
+`HEkk::initialiseBound`: workspace bounds from LP, followed by (for dual simplex
+outside phase 2) special bounds `[-1000, 1000]`/`[-1, 0]`/`[0, 1]`/`[0, 0]` making
+the dual objective equal to minus the sum of infeasibilities. For primal simplex,
+random perturbation of bounds (base `multiplier * 5e-7`, relative to bound,
+absolute if `|bound| < 1`) expands finite bounds; fixed nonbasic variables are kept intact.
 """
 function initialise_bound!(e::SimplexEngine, algorithm::SimplexAlgorithm,
     solve_phase::Int; perturb::Bool=false)
@@ -880,8 +863,7 @@ function initialise_bound!(e::SimplexEngine, algorithm::SimplexAlgorithm,
         for iVar ∈ 1:(e.lp.num_col + e.lp.num_row)
             lower = info.workLower[iVar]
             upper = info.workUpper[iVar]
-            # Une variable fixe non basique reste à sa borne : sa borne n'est
-            # pas perturbée (elle ne peut pas bouger).
+            # Fixed nonbasic variable remains at bound: not perturbed
             if e.basis.nonbasicFlag[iVar] == kNonbasicFlagTrue && lower == upper
                 continue
             end
@@ -927,16 +909,16 @@ function initialise_bound!(e::SimplexEngine, algorithm::SimplexAlgorithm,
     solve_phase == kSolvePhase2 && return e
     for iVar ∈ 1:(e.lp.num_col + e.lp.num_row)
         if info.workLower[iVar] == -kHighsInf && info.workUpper[iVar] == kHighsInf
-            info.workLower[iVar] = -1000.0          # libre
+            info.workLower[iVar] = -1000.0          # free
             info.workUpper[iVar] = 1000.0
         elseif info.workLower[iVar] == -kHighsInf
-            info.workLower[iVar] = -1.0             # majorée
+            info.workLower[iVar] = -1.0             # upper bounded
             info.workUpper[iVar] = 0.0
         elseif info.workUpper[iVar] == kHighsInf
-            info.workLower[iVar] = 0.0              # minorée
+            info.workLower[iVar] = 0.0              # lower bounded
             info.workUpper[iVar] = 1.0
         else
-            info.workLower[iVar] = 0.0              # boxée ou fixe
+            info.workLower[iVar] = 0.0              # boxed or fixed
             info.workUpper[iVar] = 0.0
         end
         info.workRange[iVar] = info.workUpper[iVar] - info.workLower[iVar]
@@ -945,8 +927,8 @@ function initialise_bound!(e::SimplexEngine, algorithm::SimplexAlgorithm,
 end
 
 """
-`HEkk::initialiseLpColCost` — coûts signés (`sense`) et mis à l'échelle par
-`2^cost_scale_factor` ; les shifts sont remis à zéro.
+`HEkk::initialiseLpColCost` — signed costs (`sense`) scaled by
+`2^cost_scale_factor`; shifts are reset to zero.
 """
 function initialise_lp_col_cost!(e::SimplexEngine)
     cost_scale_factor = 2.0^e.options.cost_scale_factor
@@ -961,7 +943,7 @@ function initialise_lp_col_cost!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::initialiseLpRowCost` — coût nul pour les variables logiques."""
+"""`HEkk::initialiseLpRowCost` — zero cost for logical (slack) variables."""
 function initialise_lp_row_cost!(e::SimplexEngine)
     workCost = e.info.workCost
     workShift = e.info.workShift
@@ -975,16 +957,12 @@ end
 """
     initialise_cost!(e, algorithm, solve_phase; perturb = false)
 
-`HEkk::initialiseCost` : copie les coûts du LP (le `solve_phase` n'entre pas
-dans le calcul, comme dans la source), puis, si `perturb` est demandé et que le
-multiplicateur est non nul, applique la perturbation aléatoire duale :
-`xpert = (1 + r_i) (|c_i| + 1) · base` où
-`base = multiplicateur · 5e-7 · max|c|` (réduit par `sqrt(sqrt(·))` au-delà de
-100, et plafonné à 1 si moins de 1 % des variables sont boxées) ; les coûts
-logiques reçoivent `(0.5 - r_i) · multiplicateur · 1e-12`.
-Le bloc de statistiques couplé à `output_flag` n'est pas porté : il n'est pas
-atteignable depuis le dual (coûts tous nuls ⇒ `force_phase2` ⇒ pas de
-perturbation).
+`HEkk::initialiseCost`: copies LP costs (`solve_phase` does not affect computation,
+matching C++ source), and if `perturb` is requested with non-zero multiplier,
+applies dual random perturbation: `xpert = (1 + r_i) (|c_i| + 1) * base` where
+`base = multiplier * 5e-7 * max|c|` (reduced by `sqrt(sqrt(·))` beyond 100, and capped
+at 1 if fewer than 1% of variables are boxed); slack costs receive
+`(0.5 - r_i) * multiplier * 1e-12`.
 """
 function initialise_cost!(e::SimplexEngine, algorithm::SimplexAlgorithm,
     solve_phase::Int; perturb::Bool=false)
@@ -1019,13 +997,13 @@ function initialise_cost!(e::SimplexEngine, algorithm::SimplexAlgorithm,
         xpert = (1 + info.numTotRandomValue[i]) *
                 (abs(info.workCost[i]) + 1) * cost_perturbation_base
         if lower == -kHighsInf && upper == kHighsInf
-            # libre : pas de perturbation
+            # free: no perturbation
         elseif upper == kHighsInf
-            info.workCost[i] += xpert                  # minorée
+            info.workCost[i] += xpert                  # lower bounded
         elseif lower == -kHighsInf
-            info.workCost[i] -= xpert                  # majorée
+            info.workCost[i] -= xpert                  # upper bounded
         elseif lower != upper
-            info.workCost[i] += info.workCost[i] >= 0 ? xpert : -xpert  # boxée
+            info.workCost[i] += info.workCost[i] >= 0 ? xpert : -xpert  # boxed
         end
     end
     row_cost_perturbation_base = multiplier * 1e-12
@@ -1040,11 +1018,10 @@ end
 """
     initialise_nonbasic_value_and_move!(e)
 
-`HEkk::initialiseNonbasicValueAndMove` : valeurs et mouvements non basiques
-depuis `nonbasicFlag` et les bornes de l'espace de travail. Une boxée garde le
-côté désigné par son `nonbasicMove` d'origine ; un mouvement invalide est
-corrigé en `kNonbasicMoveUp` (comme la source). Les basiques restent à zéro :
-leurs valeurs viennent de `compute_primal!`.
+`HEkk::initialiseNonbasicValueAndMove`: sets nonbasic values and moves
+from `nonbasicFlag` and workspace bounds. Boxed variables keep the side
+designated by their original `nonbasicMove`; invalid move is defaulted
+to `kNonbasicMoveUp`. Basics remain zero: their values are assigned by `compute_primal!`.
 """
 function initialise_nonbasic_value_and_move!(e::SimplexEngine)
     basis, info = e.basis, e.info
@@ -1080,12 +1057,12 @@ function initialise_nonbasic_value_and_move!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::updateOperationResultDensity` — moyenne glissante des densités."""
+"""`HEkk::updateOperationResultDensity` — exponential moving average of densities."""
 update_operation_result_density(density::Float64, local_density::Float64) =
     (1 - kRunningAverageMultiplier) * density +
     kRunningAverageMultiplier * local_density
 
-"""`HEkk::fullBtran` — BTRAN complet, puis moyenne glissante `dual_col_density`."""
+"""`HEkk::fullBtran` — full BTRAN, then updates moving average `dual_col_density`."""
 function full_btran!(e::SimplexEngine, buffer::HVector)
     btran!(e.nla, buffer, e.info.dual_col_density)
     e.info.dual_col_density = update_operation_result_density(
@@ -1093,7 +1070,7 @@ function full_btran!(e::SimplexEngine, buffer::HVector)
     return buffer
 end
 
-"""`HEkk::fullPrice` — `full_row = A^T full_col`, prix colonne par colonne."""
+"""`HEkk::fullPrice` — `full_row = A^T full_col`, column-by-column pricing."""
 function full_price!(e::SimplexEngine, full_col::HVector, full_row::HVector)
     clear!(full_row)
     price_by_column!(e.lp.a_matrix, full_row, full_col)
@@ -1103,10 +1080,9 @@ end
 """
     compute_primal!(e)
 
-`HEkk::computePrimal` : `x_B = -B^{-1} N x_N` par `collectAj` puis FTRAN, dans
-le tampon local de la source (routine d'initialisation, hors du pivot courant).
-`baseValue` suit l'ordre des colonnes de base, `baseLower`/`baseUpper` sont
-recopiés, et les compteurs d'infaisabilité primal sont invalidés.
+`HEkk::computePrimal`: `x_B = -B^{-1} N x_N` via `collectAj` followed by FTRAN.
+`baseValue` follows basic column ordering, `baseLower`/`baseUpper` are synchronized,
+and primal infeasibility counters are invalidated.
 """
 function compute_primal!(e::SimplexEngine)
     num_row, num_col = e.lp.num_row, e.lp.num_col
@@ -1140,10 +1116,9 @@ end
 """
     compute_dual!(e)
 
-`HEkk::computeDual` : `workDual = workCost + workShift - [A I]^T pi` avec
-`pi = B^{-T} c_B` (BTRAN complet sur les coûts basiques), `A^T pi` par
-`priceByColumn`. Les valeurs duales des basiques sont nulles à l'arrondi. Les
-compteurs d'infaisabilité duale sont invalidés.
+`HEkk::computeDual`: `workDual = workCost + workShift - [A I]^T pi` with
+`pi = B^{-T} c_B` (full BTRAN on basic costs), `A^T pi` via `priceByColumn`.
+Basic dual values are zero within precision. Dual infeasibility counters are invalidated.
 """
 function compute_dual!(e::SimplexEngine)
     num_col, num_row = e.lp.num_col, e.lp.num_row
@@ -1182,10 +1157,10 @@ end
 """
     compute_primal_objective_value!(e)
 
-`HEkk::computePrimalObjectiveValue` :
-`cost_scale * (c_B^T x_B + c_N^T x_N) + offset`. Les coûts d'origine servent
-au calcul (pas `workCost`) et seules les variables structurelles contribuent.
-Rend la valeur, également stockée dans `info.primal_objective_value`.
+`HEkk::computePrimalObjectiveValue`:
+`cost_scale * (c_B^T x_B + c_N^T x_N) + offset`. Original costs are used
+(not `workCost`) and only structural variables contribute.
+Returns the value, also stored in `info.primal_objective_value`.
 """
 function compute_primal_objective_value!(e::SimplexEngine)
     value = 0.0
@@ -1210,10 +1185,9 @@ end
 """
     compute_dual_objective_value!(e, phase = kSolvePhase2)
 
-`HEkk::computeDualObjectiveValue` : `cost_scale * Σ x_i workDual_i` sur les
-non basiques, plus `sense * offset` sauf en phase 1 (« l'objectif dual n'a pas
-de décalage »). Rend la valeur, également stockée dans
-`info.dual_objective_value`.
+`HEkk::computeDualObjectiveValue`: `cost_scale * Σ x_i workDual_i` over nonbasics,
+plus `sense * offset` except in phase 1 ("dual objective has no offset").
+Returns the value, also stored in `info.dual_objective_value`.
 """
 function compute_dual_objective_value!(e::SimplexEngine,
     phase::Int=kSolvePhase2)
@@ -1232,15 +1206,14 @@ function compute_dual_objective_value!(e::SimplexEngine,
     return value
 end
 
-# --- Tranche M3b : primitives de `HEkk` pour le simplexe dual ----------------
+# --- Dual simplex primitives from `HEkk` ------------------------------------
 
 """
     compute_factor!(e)
 
-`HEkk::computeFactor` : INVERT du facteur sur la base courante. Rend la carence
-de rang (`0` si B^{-1} est frais). `update_count` repart à zéro et
-`build_synthetic_tick` est relevé — il sert au déclenchement des
-ré-inversions.
+`HEkk::computeFactor`: computes basis INVERT on the current basis.
+Returns rank deficiency (`0` if B^{-1} is non-singular). `update_count` is reset
+and `build_synthetic_tick` is recorded (used for triggering reinversions).
 """
 function compute_factor!(e::SimplexEngine)
     rank_deficiency = invert!(e.nla)
@@ -1259,13 +1232,12 @@ end
 """
     get_nonsingular_inverse!(e, solve_phase)
 
-`HEkk::getNonsingularInverse` sans backtracking : rend `false` si la base est
-singulière (la source tente alors une base de backtracking, M3c).
+`HEkk::getNonsingularInverse` with backtracking: returns `false` if the basis is
+singular and cannot be restored from a valid backtracking basis.
 """
 function get_nonsingular_inverse!(e::SimplexEngine, solve_phase::Int)
-    # Les poids DSE sont identifiés aux rangées : on les éparpille selon
-    # `basic_index` avant INVERT, puis on les rassemble selon la permutation
-    # produite à l'issue (base restaurée par backtracking le cas échéant).
+    # DSE weights are indexed by rows: scatter them according to `basic_index`
+    # before INVERT, then gather according to resulting permutation.
     basic_index = e.basis.basicIndex
     basic_index_before = e.basic_index_before
     copyto!(basic_index_before, basic_index)
@@ -1276,7 +1248,7 @@ function get_nonsingular_inverse!(e::SimplexEngine, solve_phase::Int)
     end
     rank_deficiency = compute_factor!(e)
     if rank_deficiency != 0
-        # Base singulière : retour à la dernière base non singulière.
+        # Singular basis: backtrack to last non-singular basis.
         deficient_hash = e.basis.hash
         get_backtracking_basis!(e) || return false
         e.info.backtracking = true
@@ -1304,8 +1276,8 @@ end
     put_backtracking_basis!(e)
     put_backtracking_basis!(e, basic_index_before_compute_factor)
 
-`HEkk::putBacktrackingBasis` : sauvegarde la base courante (ou l'ordre des
-colonnes de base d'avant INVERT) et l'état associé.
+`HEkk::putBacktrackingBasis`: saves current basis (or pre-INVERT basic index order)
+and associated shift/weight state.
 """
 function put_backtracking_basis!(e::SimplexEngine)
     info = e.info
@@ -1335,7 +1307,7 @@ function put_backtracking_basis!(e::SimplexEngine,
     return e
 end
 
-"""`HEkk::getBacktrackingBasis` — restaure la dernière base non singulière."""
+"""`HEkk::getBacktrackingBasis` — restores the last non-singular basis."""
 function get_backtracking_basis!(e::SimplexEngine)
     info = e.info
     info.valid_backtracking_basis || return false
@@ -1353,9 +1325,8 @@ end
 """
     is_bad_basis_change!(e, algorithm, variable_in, row_out, rebuild_reason)
 
-`HEkk::isBadBasisChange` : détecte un cyclage (hachage de base déjà visité sur
-itérations successives) ou un changement déjà listé comme mauvais, et le rend
-tabou.
+`HEkk::isBadBasisChange`: detects cycling (basis hash visited on successive iterations)
+or a basis change already recorded as bad, and marks it taboo.
 """
 function is_bad_basis_change!(e::SimplexEngine, algorithm::SimplexAlgorithm,
     variable_in::Int, row_out::Int, rebuild_reason::Int)
@@ -1392,8 +1363,8 @@ end
 """
     add_bad_basis_change!(e, row_out, variable_out, variable_in, reason, taboo)
 
-`HEkk::addBadBasisChange` : ajoute (ou met à jour le drapeau tabou d') un
-changement de base. Rend son index.
+`HEkk::addBadBasisChange`: records (or updates taboo flag of) a bad basis change.
+Returns its index.
 """
 function add_bad_basis_change!(e::SimplexEngine, row_out::Int,
     variable_out::Int, variable_in::Int, reason::Int, taboo::Bool)
@@ -1417,7 +1388,7 @@ function add_bad_basis_change!(e::SimplexEngine, row_out::Int,
     return index
 end
 
-"""`HEkk::clearBadBasisChange` — vide la liste, ou seulement une raison."""
+"""`HEkk::clearBadBasisChange` — empties list, or clears only a specific reason."""
 function clear_bad_basis_change!(e::SimplexEngine, reason::Int)
     if reason == kBadBasisChangeAll
         empty!(e.bad_basis_change)
@@ -1435,11 +1406,11 @@ function clear_bad_basis_change_taboo_flag!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::tabooBadBasisChange` — au moins un changement tabou est listé."""
+"""`HEkk::tabooBadBasisChange` — at least one taboo change is recorded."""
 taboo_bad_basis_change(e::SimplexEngine) =
     any(change -> change.taboo, e.bad_basis_change)
 
-"""`HEkk::applyTabooRowOut` — annule l'infaisabilité des rangées taboues."""
+"""`HEkk::applyTabooRowOut` — zeroes out infeasibility of taboo rows."""
 function apply_taboo_row_out!(e::SimplexEngine, values::Vector{Float64},
     overwrite_with::Float64)
     for change ∈ e.bad_basis_change
@@ -1452,7 +1423,7 @@ function apply_taboo_row_out!(e::SimplexEngine, values::Vector{Float64},
     return e
 end
 
-"""`HEkk::unapplyTabooRowOut` — restaure les valeurs dans l'ordre inverse."""
+"""`HEkk::unapplyTabooRowOut` — restores row values in reverse order."""
 function unapply_taboo_row_out!(e::SimplexEngine, values::Vector{Float64})
     for iX ∈ length(e.bad_basis_change):-1:1
         change = e.bad_basis_change[iX]
@@ -1464,9 +1435,9 @@ function unapply_taboo_row_out!(e::SimplexEngine, values::Vector{Float64})
 end
 
 """
-`HEkk::updateBadBasisChange` : oublie les changements mauvais dont l'entrée
-pivot a un effet primal **au moins** égal à la tolérance (le prédicat de la
-source est `>= tolérance`, appliqué par `remove_if`).
+`HEkk::updateBadBasisChange`: clears bad basis changes whose pivot entry
+has a primal effect of at least feasibility tolerance (predicate in C++
+source is `>= tolerance`, filtered via `remove_if`).
 """
 function update_bad_basis_change!(e::SimplexEngine, col_aq::HVector,
     theta_primal::Float64)
@@ -1481,8 +1452,8 @@ end
 """
     initialise_control!(e)
 
-`HEkk::initialiseControl` : seuil de bascule DSE/Devex, compteur de contrôle,
-densités remises à leurs valeurs initiales (`dual_col_density = 1`).
+`HEkk::initialiseControl`: DSE/Devex threshold, control counter,
+densities reset to initial values (`dual_col_density = 1`).
 """
 function initialise_control!(e::SimplexEngine)
     info = e.info
@@ -1508,7 +1479,7 @@ function initialise_control!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::computeDualSteepestEdgeWeights` — poids DSE de toutes les rangées."""
+"""`HEkk::computeDualSteepestEdgeWeights` — DSE weights for all rows."""
 function compute_dual_steepest_edge_weights!(e::SimplexEngine,
     initial::Bool=false)
     row_ep = e.dual_col
@@ -1520,8 +1491,8 @@ function compute_dual_steepest_edge_weights!(e::SimplexEngine,
 end
 
 """
-`HEkk::computeDualSteepestEdgeWeight` : `‖B^{-T} e_p‖²` en espace échelonné,
-avec moyenne glissante de `row_ep_density`.
+`HEkk::computeDualSteepestEdgeWeight`: `‖B^{-T} e_p‖²` in scaled space,
+with exponential moving average for `row_ep_density`.
 """
 function compute_dual_steepest_edge_weight(e::SimplexEngine, iRow::Int,
     row_ep::HVector)
@@ -1537,8 +1508,8 @@ function compute_dual_steepest_edge_weight(e::SimplexEngine, iRow::Int,
 end
 
 """
-`HEkk::updateDualSteepestEdgeWeights` :
-`w_i += a_i (w_p a_i + Kai y_i)`, plancher `kMinDualSteepestEdgeWeight`.
+`HEkk::updateDualSteepestEdgeWeights`:
+`w_i += a_i (w_p a_i + Kai y_i)`, clamped to `kMinDualSteepestEdgeWeight`.
 """
 function update_dual_steepest_edge_weights!(e::SimplexEngine, row_out::Int,
     variable_in::Int, column::HVector, new_pivotal_edge_weight::Float64,
@@ -1553,9 +1524,9 @@ function update_dual_steepest_edge_weights!(e::SimplexEngine, row_out::Int,
         aa_iRow = column.array[iRow]
         aa_iRow == 0.0 && continue
         dual_steepest_edge_array_value = dual_steepest_edge_array[iRow]
-        # `convert_to_scaled_space = !simplex_in_scaled_space_` : la conversion
-        # de `HEkk::updateDualSteepestEdgeWeights` est neutre sans facteurs
-        # d'échelle, et ignorée quand le LP est échelonné (le facteur y est).
+        # `convert_to_scaled_space = !simplex_in_scaled_space_`: scaling conversion
+        # in `HEkk::updateDualSteepestEdgeWeights` is identity without scaling factors,
+        # and skipped when LP is already scaled.
         if !e.lp.is_scaled
             aa_iRow /= basic_col_scale_factor(e.nla, iRow)
             aa_iRow *= col_aq_scale
@@ -1571,8 +1542,8 @@ function update_dual_steepest_edge_weights!(e::SimplexEngine, row_out::Int,
 end
 
 """
-`HEkk::updateDualDevexWeights` : `w_i = max(w_i, w_p a_i²)` sur les entrées
-listées de la colonne pivot.
+`HEkk::updateDualDevexWeights`: `w_i = max(w_i, w_p a_i²)` over listed
+entries of the pivot column.
 """
 function update_dual_devex_weights!(e::SimplexEngine, column::HVector,
     new_pivotal_edge_weight::Float64)
@@ -1586,7 +1557,7 @@ function update_dual_devex_weights!(e::SimplexEngine, column::HVector,
     return e
 end
 
-"""`HEkk::assessDSEWeightError` — moyennes glissantes d'erreur de poids."""
+"""`HEkk::assessDSEWeightError` — exponential moving average of weight errors."""
 function assess_dse_weight_error!(e::SimplexEngine,
     computed_edge_weight::Float64, updated_edge_weight::Float64)
     if updated_edge_weight < computed_edge_weight
@@ -1603,7 +1574,7 @@ function assess_dse_weight_error!(e::SimplexEngine,
     return e
 end
 
-"""`HEkk::resetSyntheticClock` — horloge synthétique remise à zéro après INVERT."""
+"""`HEkk::resetSyntheticClock` — resets synthetic clock tick after INVERT."""
 function reset_synthetic_clock!(e::SimplexEngine)
     e.build_synthetic_tick = e.nla.build_synthetic_tick
     e.total_synthetic_tick = 0.0
@@ -1613,8 +1584,8 @@ end
 """
     rebuild_refactor(e, rebuild_reason)
 
-`HEkk::rebuildRefactor` : avec `no_unnecessary_rebuild_refactor` (défaut), la
-ré-inversion n'est faite que si l'erreur du facteur (système test) dépasse
+`HEkk::rebuildRefactor`: with `no_unnecessary_rebuild_refactor` (default),
+reinversion is only executed if factor error on test system exceeds
 `rebuild_refactor_solution_error_tolerance`.
 """
 function rebuild_refactor(e::SimplexEngine, rebuild_reason::Int)
@@ -1641,9 +1612,9 @@ end
 """
     factor_solve_error(e)
 
-`HEkk::factorSolveError` : forme une solution aléatoire à au plus 50 non nuls
-(RNG graine 1), résout les systèmes correspondants et mesure l'erreur maximale.
-Sert à décider une ré-inversion utile.
+`HEkk::factorSolveError`: builds a random test solution with at most 50 non-zeros
+(RNG seed 1), solves corresponding systems, and measures max residual.
+Used to decide whether reinversion is necessary.
 """
 function factor_solve_error(e::SimplexEngine)
     num_col = e.lp.num_col
@@ -1671,7 +1642,7 @@ function factor_solve_error(e::SimplexEngine)
         collect_aj!(a_matrix, ftran_rhs, basic_index[iRow], value)
         sol_count == solution_num_nz && break
     end
-    # BTRAN : (B^T x) restreint aux colonnes basiques, via la vue rowwise.
+    # BTRAN: (B^T x) restricted to basic columns, via row-wise view.
     btran_scattered_rhs = e.fse_btran_scattered
     fill!(btran_scattered_rhs, 0.0)
     @inbounds for iX ∈ 1:solution_num_nz
@@ -1715,9 +1686,9 @@ end
 """
     reinvert_on_numerical_trouble!(e, alpha_col, alpha_row, tol)
 
-`HEkk::reinvertOnNumericalTrouble` : compare les pivots calculés par colonne et
-par rangée, relève le seuil de Markowitz si utile, et rend `(ré-inverser,
-mesure)`. Rend `false` tant qu'aucune update n'a été faite.
+`HEkk::reinvertOnNumericalTrouble`: compares pivots computed by column and
+by row, increases Markowitz threshold if needed, and returns `(reinvert, measure)`.
+Returns `false` if no updates have been performed yet.
 """
 function reinvert_on_numerical_trouble!(e::SimplexEngine,
     alpha_from_col::Float64, alpha_from_row::Float64, tol::Float64)
@@ -1745,7 +1716,7 @@ function reinvert_on_numerical_trouble!(e::SimplexEngine,
     return reinvert, numerical_trouble_measure
 end
 
-"""`HEkk::flipBound` — la variable non basique change de borne."""
+"""`HEkk::flipBound` — flips nonbasic variable bound."""
 function flip_bound!(e::SimplexEngine, iCol::Int)
     move = -e.basis.nonbasicMove[iCol]
     e.basis.nonbasicMove[iCol] = move
@@ -1757,9 +1728,9 @@ end
 """
     update_factor!(e, column, row_ep, iRow, hint)
 
-`HEkk::updateFactor` : mise à jour FT du facteur, puis raisons de ré-inversion
-éventuelles (limite d'updates, horloge synthétique). `hint` est la valeur
-courante de `rebuild_reason` ; la fonction rend la valeur à jour.
+`HEkk::updateFactor`: FT update of factor, then checks reinversion triggers
+(update limit, synthetic clock). `hint` is current `rebuild_reason`;
+returns updated hint.
 """
 function update_factor!(e::SimplexEngine, column::HVector, row_ep::HVector,
     iRow::Int, hint::Int)
@@ -1778,13 +1749,13 @@ function update_factor!(e::SimplexEngine, column::HVector, row_ep::HVector,
     return hint
 end
 
-"""`HEkk::updatePivots` — entrée/sortie de base, compteurs et drapeaux."""
+"""`HEkk::updatePivots` — basis entry/exit, counters and flags."""
 function update_pivots!(e::SimplexEngine, variable_in::Int, row_out::Int,
     move_out::Int)
     basis = e.basis
     info = e.info
     variable_out = basis.basicIndex[row_out]
-    # Hachage de base (détection de cyclage) : sortante puis entrante.
+    # Basis hash (cycling detection): outgoing then incoming.
     basis.hash = sparse_inverse_combine(basis.hash, variable_out - 1)
     basis.hash = sparse_combine(basis.hash, variable_in - 1)
     push!(e.visited_basis, basis.hash)
@@ -1819,13 +1790,13 @@ function update_pivots!(e::SimplexEngine, variable_in::Int, row_out::Int,
     return e
 end
 
-"""`HEkk::updateMatrix` — mise à jour de la vue rowwise partitionnée."""
+"""`HEkk::updateMatrix` — updates partitioned row-wise view."""
 function update_matrix!(e::SimplexEngine, variable_in::Int, variable_out::Int)
     update!(e.ar_matrix, variable_in, variable_out, e.lp.a_matrix)
     return e
 end
 
-"""`HEkk::initialisePartitionedRowwiseMatrix` — vue rowwise des non basiques."""
+"""`HEkk::initialisePartitionedRowwiseMatrix` — row-wise view of nonbasics."""
 function initialise_partitioned_rowwise_matrix!(e::SimplexEngine)
     e.status.has_ar_matrix && return e
     in_partition = [e.basis.nonbasicFlag[i] == kNonbasicFlagTrue
@@ -1835,7 +1806,7 @@ function initialise_partitioned_rowwise_matrix!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::computeSimplexPrimalInfeasible` — num/max/sum des infaisabilités."""
+"""`HEkk::computeSimplexPrimalInfeasible` — count/max/sum of primal infeasibilities."""
 function compute_simplex_primal_infeasible!(e::SimplexEngine)
     info = e.info
     basis = e.basis
@@ -1885,7 +1856,7 @@ function compute_simplex_primal_infeasible!(e::SimplexEngine)
     return e
 end
 
-"""`HEkk::computeSimplexDualInfeasible` — infaisabilités selon `nonbasicMove`."""
+"""`HEkk::computeSimplexDualInfeasible` — dual infeasibilities based on `nonbasicMove`."""
 function compute_simplex_dual_infeasible!(e::SimplexEngine)
     info = e.info
     basis = e.basis
@@ -1925,13 +1896,9 @@ end
 """
     return_from_solve!(e, algorithm)
 
-`HEkk::returnFromSolve` : état normalisé rendu par un solve. Retire shifts et
-perturbations, recalcule valeurs primales, duals et infaisabilités selon le
-statut, remet `valid_backtracking_basis` à faux et annule les duals des
-basiques. C'est cet état que `getSolution` rapporte, et il est nécessaire avant
-que le primal ne classe un `kUnboundedOrInfeasible` (le dual sort de sa phase 1
-avec des bornes spéciales). Les statuts d'erreur et les rapports ne sont pas
-portés.
+`HEkk::returnFromSolve`: normalized state returned by a solve. Removes shifts
+and perturbations, recomputes primal values, duals, and infeasibilities based
+on status, resets `valid_backtracking_basis` to false, and zeroes basic duals.
 """
 function return_from_solve!(e::SimplexEngine, algorithm::SimplexAlgorithm)
     status = e.model_status
@@ -1944,23 +1911,22 @@ function return_from_solve!(e::SimplexEngine, algorithm::SimplexAlgorithm)
     end
     if status == kInfeasible
         if algorithm == kPrimal
-            # Après une infaisabilité prouvée en phase 1 primale, les duals
-            # sont recalculés avec les coûts du LP.
+            # After proven infeasibility in primal phase 1, duals are
+            # recomputed using LP costs.
             initialise_cost!(e, kDual, kSolvePhase2)
             compute_dual!(e)
         end
         compute_simplex_infeasible!(e)
     elseif status == kUnboundedOrInfeasible
-        # Bornes du LP, primals et infaisabilités recalculés : le primal
-        # tranchera sur cet état.
+        # LP bounds, primals, and infeasibilities recomputed: primal will decide.
         initialise_bound!(e, kDual, kSolvePhase2)
         compute_primal!(e)
         compute_simplex_infeasible!(e)
     elseif status == kUnbounded
         compute_simplex_infeasible!(e)
     elseif status != kOptimal
-        # Limite atteinte (itérations, temps, objectif) ou statut inconnu :
-        # bornes et coûts du LP, valeurs et duals recalculés.
+        # Limit reached (iterations, time, objective) or unknown status:
+        # LP bounds and costs, values and duals recomputed.
         initialise_bound!(e, kDual, kSolvePhase2)
         initialise_nonbasic_value_and_move!(e)
         compute_primal!(e)
@@ -1972,15 +1938,14 @@ function return_from_solve!(e::SimplexEngine, algorithm::SimplexAlgorithm)
         info.workDual[e.basis.basicIndex[iRow]] = 0.0
     end
     compute_primal_objective_value!(e)
-    # `HApp::solveLpSimplex` : la base rendue est mémorisée (warm start du
-    # prochain solve si la base du Ekk a été jetée entre-temps).
+    # `HApp::solveLpSimplex`: returned basis is cached for warm start.
     store_solution_basis!(e)
     return e
 end
 
 """
-`HEkk::computeSimplexLpDualInfeasible` — infaisabilités duales selon les bornes
-du LP (utilisée pour conclure en phase 1). Rend `(num, max, sum)`.
+`HEkk::computeSimplexLpDualInfeasible` — dual infeasibilities with respect to LP bounds
+(used to conclude in phase 1). Returns `(num, max, sum)`.
 """
 function compute_simplex_lp_dual_infeasible(e::SimplexEngine)
     info = e.info
@@ -2047,9 +2012,8 @@ end
 """
     apply_taboo_variable_in!(e, values, overwrite_with)
 
-`HEkk::applyTabooVariableIn` : masque les valeurs des variables entrantes
-taboues (le dual les verrait comme non attractives le temps d'un CHUZC).
-`values` est typiquement `workDual`.
+`HEkk::applyTabooVariableIn`: masks values of taboo incoming variables
+(making them unattractive during CHUZC). `values` is typically `workDual`.
 """
 function apply_taboo_variable_in!(e::SimplexEngine, values::Vector{Float64},
     overwrite_with::Float64)
@@ -2062,7 +2026,7 @@ function apply_taboo_variable_in!(e::SimplexEngine, values::Vector{Float64},
     return e
 end
 
-"""`HEkk::unapplyTabooVariableIn` — parcourt en ordre inverse (voir source)."""
+"""`HEkk::unapplyTabooVariableIn` — traverses in reverse order (matching source)."""
 function unapply_taboo_variable_in!(e::SimplexEngine,
     values::Vector{Float64})
     for iX ∈ length(e.bad_basis_change):-1:1
@@ -2085,9 +2049,8 @@ end
 """
     bailout!(e)
 
-`HEkk::bailout` (sous-ensemble : limite d'itérations et de temps ; les
-callbacks et la limite d'objectif ne sont pas portés). Pose `solve_bailout` et
-le statut du modèle quand une limite est atteinte.
+`HEkk::bailout`: checks iteration limit and time limit. Sets `solve_bailout`
+and model status when a limit is reached.
 """
 function bailout!(e::SimplexEngine)
     e.solve_bailout && return true
@@ -2103,7 +2066,7 @@ function bailout!(e::SimplexEngine)
     return e.solve_bailout
 end
 
-"""`HEkk::choosePriceTechnique` — prix colonne ou rowwise avec bascule."""
+"""`HEkk::choosePriceTechnique` — column or row-wise price with switch."""
 function choose_price_technique(e::SimplexEngine, row_ep_density::Float64)
     density_for_column_price_switch = 0.75
     price_strategy = e.info.price_strategy
@@ -2118,11 +2081,10 @@ end
 """
     tableau_row_price!(e, row_ep, row_ap, quad_precision = false)
 
-`HEkk::tableauRowPrice` : `row_ap = row_ep' A` sur les non basiques, par
-`priceByColumn` ou `priceByRowWithSwitch` (vue partitionnée), puis moyenne
-glissante de la densité de `row_ap`. `quad_precision` (utilisé par
-`improveChooseColumnRow`) accumule en double-double et exige que `row_ep`
-courant soit à l'échelle du facteur.
+`HEkk::tableauRowPrice`: `row_ap = row_ep' A` over nonbasic variables, via
+`priceByColumn` or `priceByRowWithSwitch` (partitioned view), followed by
+exponential moving average of `row_ap` density. `quad_precision` accumulates
+in double-double (compensated quad precision) and requires `row_ep` to be in factor scale.
 """
 function tableau_row_price!(e::SimplexEngine, row_ep::HVector, row_ap::HVector,
     quad_precision::Bool=false)
@@ -2150,9 +2112,9 @@ end
 """
     unit_btran_residual!(e, row_out, row_ep, residual)
 
-`HEkk::unitBtranResidual` : `residual = e_row_out - Bᵀ row_ep`, accumulé en
-double-double (le résidu est une différence de quantités proches ; en double
-le bruit d'arrondi dominerait). Rend la norme infinie du résidu.
+`HEkk::unitBtranResidual`: `residual = e_row_out - Bᵀ row_ep`, accumulated in
+double-double (residual is a difference of close quantities; in Float64 rounding
+noise dominates). Returns infinity norm of residual.
 """
 function unit_btran_residual!(e::SimplexEngine, row_out::Int, row_ep::HVector,
     residual::HVector)
@@ -2190,11 +2152,10 @@ end
 """
     unit_btran_iterative_refinement!(e, row_out, row_ep)
 
-`HEkk::unitBtranIterativeRefinement` : une passe de raffinement itératif du
-BTRAN unitaire `row_ep`. Le résidu est normalisé par la puissance de deux la
-plus proche avant le BTRAN (pour que `kHighsTiny` ne s'applique pas à tort à
-un résidu minuscule), puis la correction est retirée et la liste d'indices est
-reconstruite dans l'ordre croissant des lignes.
+`HEkk::unitBtranIterativeRefinement`: one pass of iterative refinement on unit
+BTRAN `row_ep`. Residual is scaled by nearest power of two before BTRAN (so `kHighsTiny`
+does not zero out small residuals), then correction is subtracted and index list
+is reconstructed in ascending row order.
 """
 function unit_btran_iterative_refinement!(e::SimplexEngine, row_out::Int,
     row_ep::HVector)
@@ -2232,7 +2193,7 @@ function nearest_power_of_two_scale(value::Float64)
     return ldexp(1.0, -exp_scale)
 end
 
-"""`HEkk::getValueScale` — échelle du pivot (puissance de deux la plus proche)."""
+"""`HEkk::getValueScale` — pivot scale (nearest power of two)."""
 function get_value_scale(count::Int, value::AbstractVector{Float64})
     count <= 0 && return 1.0
     max_abs_value = 0.0
@@ -2242,7 +2203,7 @@ function get_value_scale(count::Int, value::AbstractVector{Float64})
     return nearest_power_of_two_scale(max_abs_value)
 end
 
-"""`HEkk::getMaxAbsRowValue` (vue rowwise initialisée si besoin)."""
+"""`HEkk::getMaxAbsRowValue` (row-wise view initialized if needed)."""
 function get_max_abs_row_value(e::SimplexEngine, row::Int)
     initialise_partitioned_rowwise_matrix!(e)
     val = -1.0
@@ -2255,18 +2216,16 @@ end
 """
     proof_of_primal_infeasibility!(e, row_ep, move_out, row_out)
 
-`HEkk::proofOfPrimalInfeasibility` : cherche une combinaison `y = row_ep' A`
-dont la borne supérieure impliquée contredit la borne inférieure de la
-contrainte. Les accumulations `proof_lower`/`implied_upper`/`sumInf` sont en
-`CDouble` (double-double, comme la source) : en `Float64`, le bruit
-d'arrondi rendait le gap positif et produisait de fausses preuves
-d'infaisabilité sur les séquences échelonnées.
+`HEkk::proofOfPrimalInfeasibility`: finds a linear combination `y = row_ep' A`
+whose implied upper bound contradicts the constraint lower bound. Accumulators
+`proof_lower`/`implied_upper`/`sumInf` use `CDouble` (compensated double-double,
+as in C++ source) to prevent rounding noise from creating false infeasibility proofs.
 """
 function proof_of_primal_infeasibility!(e::SimplexEngine, row_ep::HVector,
     move_out::Int, row_out::Int)
     lp = e.lp
     proof_lower = CDouble(0.0)
-    # Raffine `row_ep` : contributions négligeables et bornes infinies.
+    # Refine row_ep: purge negligible contributions and infinite bounds
     for iX ∈ 1:row_ep.count
         iRow = row_ep.index[iX]
         row_ep_value = row_ep.array[iRow]
@@ -2292,7 +2251,7 @@ function proof_of_primal_infeasibility!(e::SimplexEngine, row_ep::HVector,
         end
         proof_lower += row_ep.array[iRow] * rowBound
     end
-    # Coefficients de la preuve : `row_ep' ar_matrix`, accumulation en double.
+    # Proof coefficients: row_ep' ar_matrix, accumulated in double.
     proof_scattered = zeros(lp.num_col)
     for iRow ∈ 1:lp.num_row
         multiplier = row_ep.array[iRow]

@@ -35,7 +35,7 @@ using TinyHiGHS
 # Read and solve a standard CPLEX format LP file
 status, obj, engine = solve_lp("instances/benchmarks/netflow_small_01.lp")
 
-if status == kModelStatusOptimal
+if status == kOptimal
     println("Successfully solved to optimality!")
     println("Optimal Objective: ", obj)
     
@@ -47,6 +47,33 @@ else
     println("Solver terminated with status: ", status)
 end
 ```
+
+## MathOptInterface compatibility
+
+TinyHiGHS exposes an optional MathOptInterface (MOI) optimizer for continuous
+linear programs. The adapter is loaded automatically when MOI is present in the
+active environment, so existing low-level users keep the zero-dependency core:
+
+```julia
+using MathOptInterface
+const MOI = MathOptInterface
+using TinyHiGHS
+
+model = TinyHiGHS.Optimizer()
+x = MOI.add_variable(model)
+MOI.add_constraint(model, x, MOI.GreaterThan(1.0))
+MOI.set(model, MOI.ObjectiveSense(), MOI.MIN_SENSE)
+MOI.set(model, MOI.ObjectiveFunction{MOI.VariableIndex}(), x)
+MOI.optimize!(model)
+
+@assert MOI.get(model, MOI.TerminationStatus()) == MOI.OPTIMAL
+@assert MOI.get(model, MOI.VariablePrimal(), x) ≈ 1.0
+```
+
+The adapter supports scalar-affine objectives and constraints, variable bounds,
+minimization/maximization, primal and dual values, time limits, and simplex
+iteration limits. For high-frequency mutation sequences, use the native
+`SimplexEngine` API below to retain its persistent warm-start basis.
 
 ---
 

@@ -1,7 +1,7 @@
-# Fonctions inline de `HFactor.h` (HFactor.cpp pour `zeroCol`/`luClear`).
-# Les positions stockées sont 1-based (cf. en-tête de hfactor.jl).
+# Inline helper functions of `HFactor.h` (`zeroCol`/`luClear` in HFactor.cpp).
+# Stored positions are 1-based (cf. header of hfactor.jl).
 
-"""`HFactor::luClear` : remet L et U à vide (l_start/u_start repartent à 1)."""
+"""`HFactor::luClear`: clears L and U factors (l_start/u_start reset to 1)."""
 function luClear!(f::HFactor)
     empty!(f.l_start)
     push!(f.l_start, 1)
@@ -9,6 +9,7 @@ function luClear!(f::HFactor)
     empty!(f.l_value)
     empty!(f.u_pivot_index)
     empty!(f.u_pivot_value)
+    empty!(f.u_pivot_inv_value)
     empty!(f.u_start)
     push!(f.u_start, 1)
     empty!(f.u_index)
@@ -16,7 +17,7 @@ function luClear!(f::HFactor)
     return f
 end
 
-"""`HFactor::colInsert` — insère un élément actif en fin de section active."""
+"""`HFactor::colInsert` — inserts an active element at the end of active column section."""
 function colInsert!(f::HFactor, iCol::Int, iRow::Int, value::Float64)
     iput = f.mc_start[iCol] + f.mc_count_a[iCol]
     f.mc_count_a[iCol] += 1
@@ -25,7 +26,7 @@ function colInsert!(f::HFactor, iCol::Int, iRow::Int, value::Float64)
     return nothing
 end
 
-"""`HFactor::colStoreN` — insère un élément non actif depuis la fin de colonne."""
+"""`HFactor::colStoreN` — inserts an inactive element from the column end."""
 function colStoreN!(f::HFactor, iCol::Int, iRow::Int, value::Float64)
     f.mc_count_n[iCol] += 1
     iput = f.mc_start[iCol] + f.mc_space[iCol] - f.mc_count_n[iCol]
@@ -34,7 +35,7 @@ function colStoreN!(f::HFactor, iCol::Int, iRow::Int, value::Float64)
     return nothing
 end
 
-"""`HFactor::colFixMax` — plus grand |valeur active| × seuil de pivot."""
+"""`HFactor::colFixMax` — largest |active value| * pivot threshold."""
 function colFixMax!(f::HFactor, iCol::Int)
     max_value = 0.0
     for k ∈ f.mc_start[iCol]:(f.mc_start[iCol] + f.mc_count_a[iCol] - 1)
@@ -44,7 +45,7 @@ function colFixMax!(f::HFactor, iCol::Int)
     return nothing
 end
 
-"""`HFactor::colDelete` — retire `iRow` de la colonne (swap avec la fin)."""
+"""`HFactor::colDelete` — removes `iRow` from column (swaps with end)."""
 function colDelete!(f::HFactor, iCol::Int, iRow::Int)
     f.mc_count_a[iCol] -= 1
     imov = f.mc_start[iCol] + f.mc_count_a[iCol]
@@ -58,7 +59,7 @@ function colDelete!(f::HFactor, iCol::Int, iRow::Int)
     return pivot_multiplier
 end
 
-"""`HFactor::rowInsert` — ajoute une colonne à la fin d'une ligne."""
+"""`HFactor::rowInsert` — appends column to row end."""
 function rowInsert!(f::HFactor, iCol::Int, iRow::Int)
     iput = f.mr_start[iRow] + f.mr_count[iRow]
     f.mr_count[iRow] += 1
@@ -66,7 +67,7 @@ function rowInsert!(f::HFactor, iCol::Int, iRow::Int)
     return nothing
 end
 
-"""`HFactor::rowDelete` — retire `iCol` de la ligne (swap avec la fin)."""
+"""`HFactor::rowDelete` — removes `iCol` from row (swaps with end)."""
 function rowDelete!(f::HFactor, iCol::Int, iRow::Int)
     f.mr_count[iRow] -= 1
     imov = f.mr_start[iRow] + f.mr_count[iRow]
@@ -78,9 +79,8 @@ function rowDelete!(f::HFactor, iCol::Int, iRow::Int)
     return nothing
 end
 
-# Listes chaînées par comptage. `col_link_last[index] = -2 - count` encode le
-# seau d'appartenance (valeur négative) ; les maillons sont des indices 1-based,
-# 0 = absent (sentinelle `-1` de la source).
+# Doubly-linked bucket lists by element count. `col_link_last[index] = -2 - count`
+# encodes bucket index (negative value); links are 1-based, 0 = absent (upstream `-1`).
 
 """`HFactor::clinkAdd`."""
 function clinkAdd!(f::HFactor, index::Int, count::Int)
@@ -128,7 +128,7 @@ function rlinkDel!(f::HFactor, index::Int)
     return nothing
 end
 
-"""`HFactor::zeroCol` — neutralise une colonne (pivot déferré singulier)."""
+"""`HFactor::zeroCol` — neutralizes a column (deferred singular pivot)."""
 function zeroCol!(f::HFactor, jCol::Int)
     a_start = f.mc_start[jCol]
     a_end = a_start + f.mc_count_a[jCol] - 1

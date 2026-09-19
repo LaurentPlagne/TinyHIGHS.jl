@@ -166,6 +166,8 @@ function run_sequence_port(lp::SimplexLp, ops::AbstractVector{String};
             # La limite du port est fixée par `options` (immuables) : l'op ne
             # sert qu'à l'oracle, où elle est posée avant le solve suivant.
             nothing
+        elseif op == "end"
+            break
         else
             error("opération inconnue : $op")
         end
@@ -393,5 +395,25 @@ else
         ours, ours_history = run_sequence_port(lp, ops)
         @test isempty(sequence_problems(1, ours, theirs, ours_history,
             theirs_history))
+    end
+end
+
+# The captured warm-start corpus is also a standalone regression: it must be
+# replayable without the external C++ oracle.  In particular, `base.lp` is
+# written in objective-first LP syntax, so this catches any future
+# column-order permutation in `read_lp`.
+@testset "M5 — corpus de rejeu anonymisé" begin
+    corpus_root = normpath(joinpath(@__DIR__, "..", "instances", "sequences"))
+    for (name, expected_solves, expected_c0_bounds) in
+        (("sequence_small", 76, (12.46, 12.46)),
+         ("sequence_medium", 100, (-Inf, Inf)))
+        root = joinpath(corpus_root, name)
+        lp = read_lp(joinpath(root, "base.lp"))
+        @test (lp.col_lower[1], lp.col_upper[1]) == expected_c0_bounds
+        ops = readlines(joinpath(root, "operations.txt"))
+        results, _ = run_sequence_port(lp, ops)
+        @test length(results) == expected_solves
+        @test all(r -> r.status == Int(TinyHiGHS.kOptimal), results)
+        @test all(r -> isfinite(r.objective), results)
     end
 end

@@ -10,8 +10,33 @@ CPP_DIR="$SCRIPT_DIR/cpp"
 CXX="${CXX:-clang++}"
 
 # Détection de l'installation HiGHS C++ locale (patchée ou custom)
-HIGHS_INSTALL="${HIGHS_INSTALL:-${HIGHS_DIR:-$(cd "$SCRIPT_DIR/../../HiGHS/install" 2>/dev/null && pwd || cd "$SCRIPT_DIR/../.."/*/third_party/solvers/install/highs 2>/dev/null && pwd || true)}}"
-ORIGINAL_HIGHS_LIB="${ORIGINAL_HIGHS_LIB:-$(find "$HOME/.julia/artifacts" -maxdepth 4 \( -name "libhighs*.dylib" -o -name "libhighs*.so" \) 2>/dev/null | head -n 1 | xargs dirname 2>/dev/null || true)}"
+if [ -z "${HIGHS_INSTALL:-}" ]; then
+    HIGHS_INSTALL="${HIGHS_DIR:-}"
+fi
+if [ -z "$HIGHS_INSTALL" ] && [ -d "$SCRIPT_DIR/../../HiGHS/install" ]; then
+    HIGHS_INSTALL="$(cd "$SCRIPT_DIR/../../HiGHS/install" && pwd)"
+fi
+if [ -z "$HIGHS_INSTALL" ]; then
+    for artifact in "$HOME"/.julia/artifacts/*; do
+        if [ -x "$artifact/bin/highs" ] && [ -d "$artifact/include/highs" ] && [ -d "$artifact/lib" ]; then
+            HIGHS_INSTALL="$artifact"
+            break
+        fi
+    done
+fi
+if [ -z "${ORIGINAL_HIGHS_LIB:-}" ]; then
+    # Prefer the v1.15 artifact used by the benchmark. Julia may keep older
+    # HiGHS artifacts alongside it; selecting the first filesystem match can
+    # link an incompatible library (and, on macOS, a missing BLAS rpath).
+    ORIGINAL_HIGHS_LIB="$(find "$HOME/.julia/artifacts" -maxdepth 4 \
+        \( -name "libhighs.1.15.dylib" -o -name "libhighs.1.15.so" \) 2>/dev/null \
+        | head -n 1 | xargs dirname 2>/dev/null || true)"
+    if [ -z "$ORIGINAL_HIGHS_LIB" ]; then
+        ORIGINAL_HIGHS_LIB="$(find "$HOME/.julia/artifacts" -maxdepth 4 \
+            \( -name "libhighs*.dylib" -o -name "libhighs*.so" \) 2>/dev/null \
+            | head -n 1 | xargs dirname 2>/dev/null || true)"
+    fi
+fi
 
 if [ -z "$HIGHS_INSTALL" ] || [ ! -d "$HIGHS_INSTALL" ]; then
     echo "Erreur: Répertoire d'installation de HiGHS non trouvé."

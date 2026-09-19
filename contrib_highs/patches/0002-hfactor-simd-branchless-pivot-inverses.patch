@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Laurent Plagne <laurent.plagne@gmail.com>
+Date: Fri, 18 Sep 2026 21:55:00 +0200
+Subject: [PATCH] HFactor: SIMD pre-inversion and branchless substitution for diagonal pivots
+
+---
+ highs/util/HFactor.h   |   1 +
+ highs/util/HFactor.cpp | 100 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 97 insertions(+), 4 deletions(-)
+
+--- a/highs/util/HFactor.h
++++ b/highs/util/HFactor.h
+@@ -438,6 +438,7 @@ class HFactor {
+   vector<HighsInt> u_pivot_lookup;
+   vector<HighsInt> u_pivot_index;
+   vector<double> u_pivot_value;
++  vector<double> u_pivot_inv_value;
+
+   HighsInt u_merit_x;  // Only in PF and MPF
+   HighsInt u_total_x;  // Only in PF and MPF
+--- a/highs/util/HFactor.cpp
++++ b/highs/util/HFactor.cpp
+@@ -58,6 +58,56 @@ static void solveMatrixT(const HighsInt X_Start, const
+   }
+ }
+
++#if defined(__x86_64__) || defined(_M_X64)
++  #if defined(__AVX512F__)
++    #include <immintrin.h>
++    #define HIGHS_SIMD_AVX512
++  #elif defined(__AVX__)
++    #include <immintrin.h>
++    #define HIGHS_SIMD_AVX
++  #endif
++#elif defined(__aarch64__) || defined(_M_ARM64)
++  #include <arm_neon.h>
++  #define HIGHS_SIMD_NEON
++#endif
++
++static void invertPivotsSimd(const std::size_t n, const double* __restrict src,
++                             double* __restrict dst) {
++  std::size_t i = 0;
++#if defined(HIGHS_SIMD_AVX512)
++  const __m512d ones512 = _mm512_set1_pd(1.0);
++  for (; i + 8 <= n; i += 8) {
++    __m512d v = _mm512_loadu_pd(src + i);
++    __m512d inv = _mm512_div_pd(ones512, v);
++    _mm512_storeu_pd(dst + i, inv);
++  }
++#elif defined(HIGHS_SIMD_AVX)
++  const __m256d ones256 = _mm256_set1_pd(1.0);
++  for (; i + 4 <= n; i += 4) {
++    __m256d v = _mm256_loadu_pd(src + i);
++    __m256d inv = _mm256_div_pd(ones256, v);
++    _mm256_storeu_pd(dst + i, inv);
++  }
++#elif defined(HIGHS_SIMD_NEON)
++  const float64x2_t ones128 = vdupq_n_f64(1.0);
++  for (; i + 2 <= n; i += 2) {
++    float64x2_t v = vld1q_f64(src + i);
++    float64x2_t inv = vdivq_f64(ones128, v);
++    vst1q_f64(dst + i, inv);
++  }
++#endif
++  #if defined(__clang__)
++  #pragma clang loop vectorize(enable)
++  #elif defined(__GNUC__)
++  #pragma GCC ivdep
++  #elif defined(_MSC_VER)
++  #pragma loop(ivdep)
++  #endif
++  for (; i < n; ++i) {
++    dst[i] = 1.0 / src[i];
++  }
++}
++
+ static void solveHyper(const HighsInt h_size, const HighsInt* h_lookup,
+                        const HighsInt* h_pivot_index,
+                        const double* h_pivot_value, const HighsInt* h_start,
+@@ -551,6 +601,7 @@ void HFactor::luClear() {
+
+   u_pivot_index.clear();
+   u_pivot_value.clear();
++  u_pivot_inv_value.clear();
+   u_start.clear();
+   u_start.push_back(0);
+   u_index.clear();
+@@ -1609,6 +1660,10 @@ void HFactor::buildFinish() {
+     // Add cost of buildFinish to build_synthetic_tick
+     build_synthetic_tick += num_row * 80 + (LcountX + u_countX) * 60;
+   }
++
++  // Vectorized SIMD pre-inversion of diagonal pivots
++  u_pivot_inv_value.resize(u_pivot_value.size());
++  invertPivotsSimd(u_pivot_value.size(), u_pivot_value.data(), u_pivot_inv_value.data());
+ }
+
+ void HFactor::zeroCol(const HighsInt jCol) {
+@@ -1687,7 +1742,7 @@ void HFactor::ftranL(HVector& rhs, const double expect
+     factor_timer.start(FactorFtranLowerHyper, factor_timer_clock_pointer);
+     const HighsInt* l_index = this->l_index.data();
+     const double* l_value = this->l_value.data();
+-    solveHyper(num_row, l_pivot_lookup.data(), l_pivot_index.data(), 0,
++    solveHyper(num_row, l_pivot_lookup.data(), l_pivot_index.data(), 0, 0,
+                l_start.data(), &l_start[1], &l_index[0], &l_value[0], &rhs);
+     factor_timer.stop(FactorFtranLowerHyper, factor_timer_clock_pointer);
+   }
+@@ -1736,7 +1791,7 @@ void HFactor::btranL(HVector& rhs, const double expect
+     factor_timer.start(FactorBtranLowerHyper, factor_timer_clock_pointer);
+     const HighsInt* lr_index = this->lr_index.data();
+     const double* lr_value = this->lr_value.data();
+-    solveHyper(num_row, l_pivot_lookup.data(), l_pivot_index.data(), 0,
++    solveHyper(num_row, l_pivot_lookup.data(), l_pivot_index.data(), 0, 0,
+                lr_start.data(), &lr_start[1], &lr_index[0], &lr_value[0], &rhs);
+     factor_timer.stop(FactorBtranLowerHyper, factor_timer_clock_pointer);
+   }
+@@ -1810,7 +1865,7 @@ void HFactor::ftranU(HVector& rhs, const double expect
+       const HighsInt pivotRow = u_pivot_index[i_logic];
+       double pivot_multiplier = rhs_array[pivotRow];
+       if (fabs(pivot_multiplier) > kHighsTiny) {
+-        pivot_multiplier /= u_pivot_value[i_logic];
++        pivot_multiplier *= u_pivot_inv_value[i_logic];
+         rhs_index[rhs_count++] = pivotRow;
+         rhs_array[pivotRow] = pivot_multiplier;
+         const HighsInt start = u_start[i_logic];
+@@ -1908,7 +1963,7 @@ void HFactor::btranU(HVector& rhs, const double expect
+       const HighsInt pivotRow = u_pivot_index[i_logic];
+       double pivot_multiplier = rhs_array[pivotRow];
+       if (fabs(pivot_multiplier) > kHighsTiny) {
+-        pivot_multiplier /= u_pivot_value[i_logic];
++        pivot_multiplier *= u_pivot_inv_value[i_logic];
+         rhs_index[rhs_count++] = pivotRow;
+         rhs_array[pivotRow] = pivot_multiplier;
+         const HighsInt start = ur_start[i_logic];
+@@ -2502,6 +2557,7 @@ void HFactor::updateFT(HVector* aq, HVector* ep, Highs
+   u_pivot_lookup[iRow] = u_pivot_index.size();
+   u_pivot_index.push_back(iRow);
+   u_pivot_value.push_back(pivot * alpha);
++  u_pivot_inv_value.push_back(1.0 / (pivot * alpha));
+
+   // Store row_ep as R matrix
+   for (HighsInt i = 0; i < ep->packCount; i++) {
+@@ -2690,6 +2746,7 @@ void InvertibleRepresentation::clear() {
+   this->u_pivot_lookup.clear();
+   this->u_pivot_index.clear();
+   this->u_pivot_value.clear();
++  this->u_pivot_inv_value.clear();
+   this->u_start.clear();
+   this->u_last_p.clear();
+   this->u_index.clear();

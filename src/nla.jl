@@ -1,14 +1,13 @@
-# Portage partiel de `simplex/HSimplexNla.{h,cpp}` (M2b) : solves en espace
-# échelonné et application des échelles autour de `HFactor`.
+# Partial port of `simplex/HSimplexNla.{h,cpp}` (M2b): solves in scaled space
+# and scaling application around `HFactor`.
 #
-# Non porté : `ProductFormUpdate` (mises à jour PF), `SimplexIterate`,
-# `putInvert`/`getInvert`, `addCols`/`addRows`, télémétrie/rapports.
-# `consider*Scaling` (calcul des facteurs) reste en M5 ; ici les facteurs sont
-# fournis (ou `nothing` = pas d'échelle).
+# Not ported: `ProductFormUpdate` (PF updates), `SimplexIterate`,
+# `putInvert`/`getInvert`, `addCols`/`addRows`, telemetry/reporting.
+# Factors are provided (or `nothing` = unscaled).
 #
-# Convention 1-based : `basic_index[i]` est le numéro de variable (1-based) de
-# la i-ème colonne de base ; les facteurs d'échelle suivent la même convention
-# que `HighsScale` (variable ≤ num_col → `col`, sinon logique → `row`).
+# 1-based convention: `basic_index[i]` is the variable number (1-based) of
+# the i-th basis column; scale factors follow the same convention
+# as `HighsScale` (variable ≤ num_col → `col`, otherwise slack → `row`).
 
 const kDensityForIndexing = 0.4
 
@@ -31,9 +30,9 @@ mutable struct Nla
 end
 
 """
-Contrairement à `HFactor`, la NLA **partage** `factor.basic_index` (en C++, la
-classe stocke le pointeur de l'appelant) : `build!` permute le tableau en place
-et les facteurs d'échelle restent alignés sur l'ordre des colonnes de base.
+Unlike `HFactor`, NLA **shares** `factor.basic_index` (in C++, the class
+stores the caller's pointer): `build!` permutes the array in-place
+and scale factors remain aligned with basis column order.
 """
 function Nla(factor::HFactor, num_col::Int, num_row::Int;
     scale::Union{Nothing,Scale}=nothing)
@@ -53,7 +52,7 @@ function variable_scale_factor(nla::Nla, iVar::Int)
            1.0 / nla.scale.row[iVar - nla.num_col]
 end
 
-"""`HSimplexNla::basicColScaleFactor` — `iCol` indexe la base (1-based)."""
+"""`HSimplexNla::basicColScaleFactor` — `iCol` indexes the basis (1-based)."""
 function basic_col_scale_factor(nla::Nla, iCol::Int)
     nla.scale === nothing && return 1.0
     return variable_scale_factor(nla, nla.basic_index[iCol])
@@ -66,7 +65,7 @@ function pivot_in_scaled_space(nla::Nla, aq::HVector, variable_in::Int,
            variable_scale_factor(nla, nla.basic_index[row_out])
 end
 
-"""`HSimplexNla::invert` — reconstruction du facteur, tick conservé."""
+"""`HSimplexNla::invert` — factor reconstruction, preserved tick."""
 function invert!(nla::Nla)
     rank_deficiency = build!(nla.factor)
     nla.build_synthetic_tick = nla.factor.build_synthetic_tick
@@ -162,7 +161,7 @@ function row_ep_2norm_in_scaled_space(nla::Nla, iRow::Int, row_ep::HVector)
     return total
 end
 
-"""`HSimplexNla::transformForUpdate` — met `aq`/`ep` à l'échelle du facteur."""
+"""`HSimplexNla::transformForUpdate` — scale `aq`/`ep` to factor units."""
 function transform_for_update!(nla::Nla, aq::HVector, ep::HVector,
     variable_in::Int, row_out::Int)
     nla.scale === nothing && return nothing
@@ -179,7 +178,7 @@ function transform_for_update!(nla::Nla, aq::HVector, ep::HVector,
     return nothing
 end
 
-"""`HSimplexNla::update` — délègue à `HFactor` (pas de ProductFormUpdate)."""
+"""`HSimplexNla::update` — delegate to `HFactor` (no ProductFormUpdate)."""
 function update!(nla::Nla, aq::HVector, ep::HVector, iRow::Int)
     clear!(nla.factor.refactor_info)
     update!(nla.factor, aq, ep, iRow)

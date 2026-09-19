@@ -1,6 +1,6 @@
 # ==============================================================================
-# Lecteur et Écrivain natif de fichiers .lp (Format CPLEX LP standard)
-# Zéro dépendance externe — Pur Julia stdlib
+# Native CPLEX .lp file reader and writer
+# Zero external dependencies — pure Julia stdlib
 # ==============================================================================
 
 """
@@ -24,7 +24,7 @@ write_lp("exported.lp", lp)
 """
 function write_lp(io::IO, lp::SimplexLp; var_names=nothing, row_names=nothing)
     m = lp.a_matrix
-    is_colwise(m) || error("write_lp exige que la matrice A soit en vue colwise")
+    is_colwise(m) || error("write_lp requires matrix A to be in column-wise format")
 
     vnames = if isnothing(var_names)
         ["c$(j-1)" for j in 1:lp.num_col]
@@ -41,9 +41,11 @@ function write_lp(io::IO, lp::SimplexLp; var_names=nothing, row_names=nothing)
     println(io, lp.sense == kMaximize ? "Maximize" : "Minimize")
     print(io, " obj:")
     wrote_obj = false
+    # Emit zero-cost columns as explicit zero terms as well.  LP readers
+    # discover variables in textual order; listing every column here makes the
+    # default c0..cN names a stable positional schema for numeric replay logs.
     for j in 1:lp.num_col
         c = lp.col_cost[j]
-        c == 0.0 && continue
         sgn = c >= 0 ? "+" : "-"
         val = abs(c)
         print(io, " ", sgn, val, " ", vnames[j])
@@ -53,7 +55,7 @@ function write_lp(io::IO, lp::SimplexLp; var_names=nothing, row_names=nothing)
     println(io)
 
     println(io, "Subject To")
-    # Construction des lignes pour affichage lisible
+    # Build row terms for readable display
     rows_terms = [Tuple{Int,Float64}[] for _ in 1:lp.num_row]
     for j in 1:lp.num_col
         for p in m.start[j]:(m.start[j+1] - 1)
@@ -80,8 +82,8 @@ function write_lp(io::IO, lp::SimplexLp; var_names=nothing, row_names=nothing)
         elseif rl == -kHighsInf
             println(io, " <= ", ru)
         else
-            # Contrainte doublement bornée (range constraint) : décomposée en ru
-            # car le standard .lp supporte mal les doubles bornes directes en Subject To
+            # Ranged constraint: decomposed into upper bound
+            # as standard .lp format does not natively support two-sided bounds in Subject To
             println(io, " <= ", ru)
         end
     end
@@ -146,7 +148,7 @@ function read_lp(filename_or_io)::SimplexLp
         readlines(filename_or_io)
     end
 
-    # Découpage en sections
+    # Section splitting
     section = :none
     sense = kMinimize
     obj_name = "obj"
@@ -155,7 +157,7 @@ function read_lp(filename_or_io)::SimplexLp
     bound_lines = SubString{String}[]
 
     for line in lines
-        # Élaguer les commentaires
+        # Strip comments
         c_idx = findfirst(==('\\'), line)
         active_part = isnothing(c_idx) ? strip(line) : strip(line[1:prevind(line, c_idx)])
         isempty(active_part) && continue
@@ -182,14 +184,14 @@ function read_lp(filename_or_io)::SimplexLp
         if section == :obj
             append!(obj_tokens, Base.split(active_part))
         elseif section == :constraints
-            # Nouvelle contrainte ou continuation
+            # New constraint or continuation line
             push!(constraint_lines, (active_part, Base.split(active_part)))
         elseif section == :bounds
             push!(bound_lines, SubString(active_part, 1))
         end
     end
 
-    # Table des variables
+    # Variable lookup table
     var2col = Dict{String,Int}()
     col_names = String[]
     function get_col_id!(v::AbstractString)
@@ -200,7 +202,7 @@ function read_lp(filename_or_io)::SimplexLp
         end
     end
 
-    # Parseur de polynôme linéaire : [ "+", "1.5", "x1", "-", "x2" ] ou [ "+1.5x1", "-x2" ]
+    # Linear polynomial parser: [ "+", "1.5", "x1", "-", "x2" ] or [ "+1.5x1", "-x2" ]
     function parse_linear_terms(tokens)
         terms = Tuple{Float64, String}[]
         sign = 1.0
@@ -218,7 +220,7 @@ function read_lp(filename_or_io)::SimplexLp
                 continue
             end
 
-            # Vérifier si tok commence par + ou -
+            # Check if token starts with + or -
             if startswith(tok, "+")
                 sign = 1.0
                 tok = tok[2:end]
@@ -227,7 +229,17 @@ function read_lp(filename_or_io)::SimplexLp
                 tok = tok[2:end]
             end
 
-            # Est-ce un nombre pur ?
+            # If a coefficient is pending, the current token is the variable name
+            # (even if the variable name is numeric, e.g., in Netlib instances written by HiGHS)
+            if !isnothing(pending_coeff)
+                push!(terms, (pending_coeff, String(tok)))
+                pending_coeff = nothing
+                sign = 1.0
+                i += 1
+                continue
+            end
+
+            # Is it a pure numeric value?
             val = tryparse(Float64, tok)
             if !isnothing(val)
                 pending_coeff = sign * val
@@ -236,18 +248,16 @@ function read_lp(filename_or_io)::SimplexLp
                 continue
             end
 
-            # C'est un nom de variable, précédé éventuellement d'un coefficient
-            coeff = isnothing(pending_coeff) ? sign : pending_coeff
-            push!(terms, (coeff, String(tok)))
-            pending_coeff = nothing
+            # Variable name without explicit coefficient (implicit 1.0 or -1.0)
+            push!(terms, (sign, String(tok)))
             sign = 1.0
             i += 1
         end
         return terms
     end
 
-    # Parser l'objectif
-    # Éventuel nom d'objectif "obj:" au début
+    # Parse objective
+    # Optional leading objective name "obj:"
     if !isempty(obj_tokens) && endswith(obj_tokens[1], ":")
         popfirst!(obj_tokens)
     end
@@ -256,7 +266,7 @@ function read_lp(filename_or_io)::SimplexLp
         get_col_id!(vname)
     end
 
-    # Parser les contraintes
+    # Parse constraints
     raw_constraints = @NamedTuple{name::String, lhs_tokens::Vector{SubString{String}}, op::String, rhs::Float64}[]
     current_name = ""
     current_tokens = SubString{String}[]
@@ -265,9 +275,9 @@ function read_lp(filename_or_io)::SimplexLp
         t_first = toks[1]
         c_colon = findfirst(==(':'), raw_str)
         if !isnothing(c_colon)
-            # Clôturer la précédente si existante
+            # Close previous constraint if existing
             if !isempty(current_tokens)
-                # Trouver l'opérateur et le RHS
+                # Find operator and RHS
                 op_idx = findfirst(t -> t in ("<=", ">=", "=", "<", ">"), current_tokens)
                 if !isnothing(op_idx)
                     op = String(current_tokens[op_idx])
@@ -293,7 +303,7 @@ function read_lp(filename_or_io)::SimplexLp
         end
     end
 
-    # Enregistrer toutes les variables des contraintes
+    # Register all constraint variables
     parsed_lhs = Vector{Tuple{Float64, String}}[]
     for c in raw_constraints
         terms = parse_linear_terms(c.lhs_tokens)
@@ -306,13 +316,13 @@ function read_lp(filename_or_io)::SimplexLp
     num_col = length(col_names)
     num_row = length(raw_constraints)
 
-    # Coûts colonnes
+    # Column costs
     col_cost = zeros(Float64, num_col)
     for (coeff, vname) in obj_terms
         col_cost[var2col[vname]] += coeff
     end
 
-    # Bornes lignes
+    # Row bounds
     row_lower = fill(-kHighsInf, num_row)
     row_upper = fill(kHighsInf, num_row)
     for (i, c) in enumerate(raw_constraints)
@@ -326,7 +336,10 @@ function read_lp(filename_or_io)::SimplexLp
         end
     end
 
-    # Matrice creuse CSC : colonnes triées par ligne
+    # Keep the parser's first-occurrence order while collecting the model.
+    # It is reordered below once bounds have been parsed.  Files written by
+    # `write_lp` use the stable synthetic names `c0`, `c1`, ..., so their
+    # numeric order is the only ordering that survives an LP round trip.
     col_entries = [Tuple{Int,Float64}[] for _ in 1:num_col]
     for (iRow, terms) in enumerate(parsed_lhs)
         for (coeff, vname) in terms
@@ -335,32 +348,14 @@ function read_lp(filename_or_io)::SimplexLp
         end
     end
 
-    a_start = zeros(Int, num_col + 1)
-    a_start[1] = 1
-    total_nz = sum(length, col_entries)
-    a_index = zeros(Int, total_nz)
-    a_value = zeros(Float64, total_nz)
-
-    pos = 1
-    for j in 1:num_col
-        sort!(col_entries[j], by=first)
-        for (iRow, val) in col_entries[j]
-            a_index[pos] = iRow
-            a_value[pos] = val
-            pos += 1
-        end
-        a_start[j+1] = pos
-    end
-    matrix = SparseMatrix(num_col, num_row, a_start, a_index, a_value)
-
-    # Bornes variables : par défaut [0, Inf) en standard CPLEX LP
+    # Variable bounds: default [0, Inf) in standard CPLEX LP
     col_lower = zeros(Float64, num_col)
     col_upper = fill(kHighsInf, num_col)
 
     for b_line in bound_lines
         toks = Base.split(b_line)
         isempty(toks) && continue
-        # Cas 1 : "var free"
+        # Case 1: "var free"
         if length(toks) >= 2 && lowercase(toks[2]) == "free"
             vname = String(toks[1])
             if haskey(var2col, vname)
@@ -370,7 +365,7 @@ function read_lp(filename_or_io)::SimplexLp
             end
             continue
         end
-        # Cas 2 : "l <= var <= u"
+        # Case 2: "l <= var <= u"
         if length(toks) == 5 && toks[2] == "<=" && toks[4] == "<="
             l_val = parse_bound_val(toks[1])
             vname = String(toks[3])
@@ -382,7 +377,7 @@ function read_lp(filename_or_io)::SimplexLp
             end
             continue
         end
-        # Cas 3 : "var <= u" ou "var >= l" ou "var = val"
+        # Case 3: "var <= u" or "var >= l" or "var = val"
         if length(toks) == 3
             vname = String(toks[1])
             op = toks[2]
@@ -400,7 +395,7 @@ function read_lp(filename_or_io)::SimplexLp
             end
             continue
         end
-        # Cas 4 : "l <= var"
+        # Case 4: "l <= var"
         if length(toks) == 3 && toks[2] == "<="
             val = parse_bound_val(toks[1])
             vname = String(toks[3])
@@ -412,7 +407,45 @@ function read_lp(filename_or_io)::SimplexLp
         end
     end
 
-    return SimplexLp(num_col, num_row, matrix, col_cost, col_lower, col_upper, row_lower, row_upper; sense=sense)
+    # `write_lp` deliberately gives anonymized columns the names c0..cN.  A
+    # standard LP reader is free to discover variables in textual order, which
+    # puts objective-only columns before columns first seen in constraints.  In
+    # that case a numeric operation such as `change_col_bounds 1 ...` would
+    # silently target the wrong column after a round trip.  Recover the stable
+    # order for this canonical name family; arbitrary user names retain the
+    # normal first-occurrence order.
+    column_order = collect(1:num_col)
+    canonical = [get(var2col, "c$(j - 1)", 0) for j in 1:num_col]
+    if all(!iszero, canonical) && length(unique(canonical)) == num_col
+        column_order = canonical
+    end
+
+    ordered_col_cost = col_cost[column_order]
+    ordered_col_lower = col_lower[column_order]
+    ordered_col_upper = col_upper[column_order]
+
+    # CSC sparse matrix in the stable column order, with rows sorted.
+    a_start = zeros(Int, num_col + 1)
+    a_start[1] = 1
+    total_nz = sum(length, col_entries; init=0)
+    a_index = zeros(Int, total_nz)
+    a_value = zeros(Float64, total_nz)
+
+    pos = 1
+    for j in 1:num_col
+        old_j = column_order[j]
+        sort!(col_entries[old_j], by=first)
+        for (iRow, val) in col_entries[old_j]
+            a_index[pos] = iRow
+            a_value[pos] = val
+            pos += 1
+        end
+        a_start[j + 1] = pos
+    end
+    matrix = SparseMatrix(num_col, num_row, a_start, a_index, a_value)
+
+    return SimplexLp(num_col, num_row, matrix, ordered_col_cost,
+        ordered_col_lower, ordered_col_upper, row_lower, row_upper; sense=sense)
 end
 
 function parse_bound_val(s::AbstractString)::Float64
@@ -423,7 +456,7 @@ function parse_bound_val(s::AbstractString)::Float64
 end
 
 # ==============================================================================
-# API de haut niveau : solve! et solve_lp
+# High-level API: solve! and solve_lp
 # ==============================================================================
 
 """
@@ -440,7 +473,7 @@ rebuilds and refactorizations in-place.
 - `algorithm::SimplexAlgorithm`: Optimization algorithm to use, either `kDual` (dual simplex, default) or `kPrimal` (primal simplex).
 
 # Returns
-- `ModelStatus`: Optimization outcome (e.g., `kModelStatusOptimal`, `kModelStatusInfeasible`, `kModelStatusUnbounded`).
+- `ModelStatus`: Optimization outcome (e.g., `kOptimal`, `kInfeasible`, `kUnbounded`).
 
 # Performance Note
 When reusing the same `engine` across a sequence of resolves with modified bounds or costs
@@ -465,7 +498,7 @@ Convenience high-level entry point to load (if path) and solve a linear program.
 
 # Returns
 A 3-tuple `(status, objective_value, engine)`:
-- `status::ModelStatus`: Final model status (e.g., `kModelStatusOptimal`).
+- `status::ModelStatus`: Final model status (e.g., `kOptimal`).
 - `objective_value::Float64`: Primal objective value at termination.
 - `engine::SimplexEngine`: The solved simplex engine instance, allowing extraction of primal/dual solution vectors and basis information.
 
@@ -474,7 +507,7 @@ A 3-tuple `(status, objective_value, engine)`:
 using TinyHiGHS
 
 status, obj, engine = solve_lp("instances/benchmarks/netflow_small_01.lp")
-if status == kModelStatusOptimal
+if status == kOptimal
     println("Optimal objective: ", obj)
     println("Primal values: ", engine.info.workValue[1:engine.lp.num_col])
 end
@@ -487,4 +520,3 @@ function solve_lp(lp::SimplexLp; algorithm=kDual)
 end
 
 solve_lp(path::AbstractString; kwargs...) = solve_lp(read_lp(path); kwargs...)
-

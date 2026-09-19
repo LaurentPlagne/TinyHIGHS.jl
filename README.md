@@ -36,7 +36,7 @@ Everything is self-contained. Clone and run:
 
 ```bash
 git clone https://github.com/LaurentPlagne/TinyHIGHS.jl.git
-cd TinyHiGHS.jl
+cd TinyHIGHS.jl
 ```
 
 ### 1. Warm-Start Sequence Benchmark (TinyHiGHS vs HiGHS C++)
@@ -46,6 +46,12 @@ Replays continuous sequences of bound modifications and warm-start resolves on a
 julia --project=. bench/compare_sequences.jl
 ```
 
+To regenerate the checked-in sequence snapshots from their operation logs:
+
+```bash
+julia --project=. bench/regenerate_sequence_assets.jl
+```
+
 **Measured Results (Apple Silicon / AArch64):**
 | LP Sequence (`instances/sequences/`) | Solves | Dimensions | TinyHiGHS.jl (Total) | HiGHS C++ (Total) | Speedup | TinyHiGHS Time/Solve |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -53,7 +59,8 @@ julia --project=. bench/compare_sequences.jl
 | **`sequence_medium`** | 100 | $1\,240 \times 1\,483$ | **61.79 ms** | 140.21 ms | **2.3x** | **617.9 µs / solve** |
 
 ### 2. Cold-Start Individual LPs (`.lp` files)
-Solves individual benchmark instances and compares bit-for-bit against the official HiGHS C++ CLI:
+Solves individual benchmark instances and compares the default reference strategy
+bit-for-bit against the official HiGHS C++ CLI:
 
 ```bash
 julia --project=. bench/compare_highs.jl
@@ -66,7 +73,23 @@ You can also replay the sequences directly in 100% native C++ using official HiG
 ./contrib_highs/run_bench_cpp.sh
 ```
 
-### 4. Configuring HiGHS C++ Location (Custom Build vs Julia Artifact)
+### 4. Full Three-Way Benchmark
+
+The exact command block used for the HiGHS upstream discussion is also kept in
+[`contrib_highs/OSCAR_MESSAGE.md`](contrib_highs/OSCAR_MESSAGE.md):
+
+```bash
+git clone https://github.com/LaurentPlagne/TinyHIGHS.jl.git
+cd TinyHIGHS.jl
+./contrib_highs/run_bench_cpp.sh
+julia --project=. bench/bench_3way.jl
+```
+
+The Julia benchmark reports unavailable C++ runners as `N/A` rather than
+failing, and marks objective mismatches as `DIFF` so performance numbers are
+never mistaken for a correctness validation.
+
+### 5. Configuring HiGHS C++ Location (Custom Build vs Julia Artifact)
 
 By default, TinyHiGHS benchmarks automatically detect and use the official HiGHS binary/library shipped via Julia's artifact system (`~/.julia/artifacts/...`) or in your system `PATH` — **zero manual configuration or C++ compilation required**.
 
@@ -97,6 +120,7 @@ In network-flow, multi-commodity, and scheduling problems, incidence matrices ar
 * **Empirical observation**: In real network sequences, **over 90% of all diagonal pivots in $U$ are exactly $\pm 1.0$**.
 * **Micro-architectural gain**: Floating-point division (`vdivsd` / `FDIV`) has a latency of 10–15 CPU cycles. Checking for `pivot == 1.0` and `pivot == -1.0` bypasses division with a 0-cycle pass-through or a 1-cycle negation. Because IEEE-754 division by $\pm 1.0$ is exact for finite numbers, this optimization is **numerically bit-for-bit identical**.
 * **Upstream impact on HiGHS C++**: Applied directly to `HFactor.cpp` in HiGHS 1.15.1, this yields a **+21% to +36% speedup** on cold-start CLI solves and up to **4.14x speedup** on warm-start sequences in native C++!
+* **Optional branchless strategy**: `kPivotBranchless` multiplies by precomputed reciprocals to remove the branch. It is exact for unit pivots; arbitrary pivots can differ from scalar division by one ULP. The default `kPivotBranching` strategy remains the bit-for-bit oracle path.
 * **Upstream PR**: A clean Pull Request with Catch2 unit tests has been prepared for `ERGO-Code/HiGHS`. See [`contrib_highs/README.md`](contrib_highs/README.md) for technical details and instructions.
 
 ### 2. Persistent Buffer Architecture (Zero Heap Allocations)

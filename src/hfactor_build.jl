@@ -1,8 +1,8 @@
 # `HFactor::buildSimple`, `HFactor::buildKernel`, `HFactor::buildFinish`
-# (HFactor.cpp:560, 871, 1400). La carence de rang complète et `refactor_info_`
-# ne sont pas portées en M1a (cf. en-tête de hfactor.jl).
+# (HFactor.cpp:560, 871, 1400). Full rank deficiency handling and `refactor_info_`
+# are covered in M1b (cf. header of hfactor.jl).
 
-"""`HFactor::buildSimple` — colonnes unités, singletons, puis matrice kernel."""
+"""`HFactor::buildSimple` — unit columns, singletons, then kernel matrix."""
 function buildSimple!(f::HFactor)
     luClear!(f)
     resize!(f.permute, f.num_basic)
@@ -17,7 +17,7 @@ function buildSimple!(f::HFactor)
         iRow = 0
         pivot_type = kPivotIllegal
         if iMat > f.num_col
-            # Colonne logique.
+            # Logical column.
             lc_iRow = iMat - f.num_col
             if f.mr_count_before[lc_iRow] >= 0
                 iRow = lc_iRow
@@ -66,7 +66,7 @@ function buildSimple!(f::HFactor)
     f.basis_matrix_num_el = f.num_row - f.nwork + Bcount
     f.build_synthetic_tick += Bcount * 60 + (f.num_row - f.nwork) * 80
 
-    # Recherche de singletons, en passes successives.
+    # Singleton search in successive passes.
     while f.nwork > 0
         nworkLast = f.nwork
         f.nwork = 0
@@ -143,7 +143,7 @@ function buildSimple!(f::HFactor)
         nworkLast == f.nwork && break
     end
 
-    # Préparation du kernel : lignes, puis colonnes.
+    # Kernel preparation: rows, then columns.
     fill!(f.row_link_first, -1)
     fill!(f.mr_count, 0)
     mr_countX = 0
@@ -193,12 +193,12 @@ function buildSimple!(f::HFactor)
     return f
 end
 
-"""`HFactor::buildKernel` — recherche de pivot de Markowitz et élimination."""
+"""`HFactor::buildKernel` — Markowitz pivot search and elimination."""
 function buildKernel!(f::HFactor)
     while f.nwork > 0
         f.nwork -= 1
 
-        # 1. Recherche du pivot.
+        # 1. Pivot search.
         jColPivot = 0
         iRowPivot = 0
         searchLimit = min(f.nwork, 8)
@@ -288,13 +288,13 @@ function buildKernel!(f::HFactor)
             return f.rank_deficiency
         end
 
-        # 2. Élimination par le pivot.
+        # 2. Elimination by pivot.
         pivot_multiplier = colDelete!(f, jColPivot, iRowPivot)
         rowDelete!(f, jColPivot, iRowPivot)
         clinkDel!(f, jColPivot)
         rlinkDel!(f, iRowPivot)
         if abs(pivot_multiplier) < f.pivot_tolerance
-            # Pivot singulier différé : d'autres pivots valides peuvent exister.
+            # Deferred singular pivot: other valid pivots may exist.
             if f.mr_count[iRowPivot] == 0
                 clinkAdd!(f, jColPivot, f.mc_count_a[jColPivot])
             else
@@ -309,7 +309,7 @@ function buildKernel!(f::HFactor)
         push!(f.refactor_info.pivot_var, f.basic_index[jColPivot])
         push!(f.refactor_info.pivot_type, kPivotMarkowitz)
 
-        # 2.2. Colonne pivot active → L.
+        # 2.2. Active pivot column -> L.
         start_A = f.mc_start[jColPivot]
         end_A = start_A + f.mc_count_a[jColPivot] - 1
         mwz_column_count = 0
@@ -327,7 +327,7 @@ function buildKernel!(f::HFactor)
         end
         push!(f.l_start, length(f.l_index) + 1)
 
-        # 2.3. Colonne pivot non active → U.
+        # 2.3. Non-active pivot column -> U.
         end_N = start_A + f.mc_space[jColPivot] - 1
         start_N = end_N - f.mc_count_n[jColPivot] + 1
         for i ∈ start_N:end_N
@@ -338,7 +338,7 @@ function buildKernel!(f::HFactor)
         push!(f.u_pivot_value, pivot_multiplier)
         push!(f.u_start, length(f.u_index) + 1)
 
-        # 2.4. Élimination sur les autres colonnes de la ligne pivot.
+        # 2.4. Elimination on other columns of pivot row.
         row_start = f.mr_start[iRowPivot]
         row_end = row_start + f.mr_count[iRowPivot] - 1
         for row_k ∈ row_start:row_end
@@ -453,7 +453,7 @@ function buildKernel!(f::HFactor)
     return 0
 end
 
-"""`HFactor::buildFinish` — U row-wise, LR/UR, permutation de `basic_index`."""
+"""`HFactor::buildFinish` — U row-wise, LR/UR, `basic_index` permutation."""
 function buildFinish!(f::HFactor)
     for i ∈ 1:f.num_row
         f.u_pivot_lookup[f.u_pivot_index[i]] = i
@@ -522,7 +522,7 @@ function buildFinish!(f::HFactor)
         end
     end
 
-    # Mérites de refactorisation (HFactor.cpp:1475).
+    # Refactorization merits (HFactor.cpp:1475).
     f.u_merit_x = trunc(Int, f.num_row + (LcountX + u_countX) * 1.5)
     f.u_total_x = u_countX
     if f.update_method == 2  # kUpdateMethodPf
@@ -538,9 +538,9 @@ function buildFinish!(f::HFactor)
     empty!(f.pf_index)
     empty!(f.pf_value)
 
-    # Permutation de `basic_index` : la variable d'origine en position i part en
-    # position permute[i] (HFactor.cpp:1491). **Pas en rebuild** : dans ce cas
-    # `basic_index` a déjà été écrit par ligne et `refactor_info.use` est armé.
+    # Permutation of `basic_index`: variable originally at position i moves to
+    # position permute[i] (HFactor.cpp:1491). Not during rebuild:
+    # in that case `basic_index` is already row-ordered and `refactor_info.use` is set.
     if !f.refactor_info.use
         resize!(f.iwork, f.num_basic)
         copyto!(f.iwork, f.basic_index)
@@ -550,5 +550,12 @@ function buildFinish!(f::HFactor)
         f.build_synthetic_tick += f.num_row * 80 +
                                   (length(f.l_index) + length(f.u_index)) * 60
     end
+
+    # SIMD vectorized pre-inversion of U diagonal pivots
+    resize!(f.u_pivot_inv_value, length(f.u_pivot_value))
+    @inbounds @simd for i ∈ eachindex(f.u_pivot_value)
+        f.u_pivot_inv_value[i] = 1.0 / f.u_pivot_value[i]
+    end
+
     return f
 end

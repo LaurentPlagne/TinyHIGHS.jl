@@ -33,7 +33,7 @@ graph TD
 
 - 🚀 **Zero Allocations in Warm-Start Resolves**: Once initialized, repeated resolves with modified bounds or objective costs require **0 bytes allocated** and execute in **30 to 50 microseconds** per solve.
 - ⚡ **Unit-Diagonal Pivot Optimization**: Leverages micro-architectural bypass for $\pm 1.0$ pivots in LU factorization (`HFactor`), eliminating over 90% of costly hardware floating-point division instructions (`FDIV`).
-- 💎 **Bit-for-Bit Exact Numerical Accuracy**: Strict IEEE-754 equivalence against frozen HiGHS reference oracles (0 ULP objective difference across test suites).
+- 💎 **Reference Numerical Accuracy**: The default `kPivotBranching` strategy is checked for strict IEEE-754 equivalence against frozen HiGHS reference oracles. The optional branchless reciprocal strategy is tested with an explicit one-ULP bound for non-unit pivots.
 - 📦 **100% Pure Julia & Zero Dependencies**: Runs out-of-the-box on macOS (Apple Silicon & Intel), Linux (x86-64 & AArch64), and Windows without requiring any external C/C++ shared library, CMake, or compiler toolchain.
 - 📝 **Native CPLEX `.lp` Reader & Writer**: Fast, dependency-free text I/O compatible with HiGHS, CPLEX, Gurobi, and Clp.
 

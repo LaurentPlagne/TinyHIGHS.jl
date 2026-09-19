@@ -2,7 +2,7 @@
 
 This document summarizes performance optimizations identified, validated, and benchmarked during the development of **[TinyHiGHS.jl](https://github.com/LaurentPlagne/TinyHIGHS.jl)** (a faithful, zero-allocation pure Julia port of HiGHS's dual and primal revised simplex solvers).
 
-All optimizations preserve **strict bit-for-bit IEEE-754 equivalence** against frozen HiGHS reference oracles.
+The unit-pivot short-circuit preserves **strict bit-for-bit IEEE-754 equivalence** against frozen HiGHS reference oracles. The optional reciprocal/branchless experiment is exact for unit pivots and is allowed a one-ULP difference for arbitrary pivots.
 
 ---
 
@@ -45,7 +45,7 @@ Replayed through `contrib_highs/cpp/replay_sequence.cpp` using official `Highs` 
 A standalone Bash + C++11 runner is provided to replay the benchmarks with no external dependencies:
 
 ```bash
-cd TinyHiGHS.jl
+cd TinyHIGHS.jl
 ./contrib_highs/run_bench_cpp.sh
 ```
 

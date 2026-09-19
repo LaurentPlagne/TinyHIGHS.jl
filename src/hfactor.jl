@@ -1,24 +1,18 @@
-# Portage de `highs/util/HFactor.{h,cpp}` + `HFactorRefactor`/`HFactorUtils`
-# (licence MIT, HiGHS). Périmètre M1a : `build` (buildSimple → buildKernel →
-# buildFinish) et les solves FTRAN/BTRAN (sparses et hyper-sparses), méthode
-# d'update FT (les buffers d'update sont vides en M1a).
+# Port of `highs/util/HFactor.{h,cpp}` + `HFactorRefactor`/`HFactorUtils`
+# (MIT License, HiGHS). Scope: `build` (buildSimple -> buildKernel ->
+# buildFinish) and sparse / hyper-sparse FTRAN/BTRAN solves, Forrest-Tomlin update method.
 #
-# Convention 1-based (plan §2.1) : les tableaux de structure stockent des
-# **positions** (déjà décalées) ; les valeurs encodées (`mr_count_before`
-# négatif, marqueurs de listes `-2 - count`) gardent l'encodage de la source.
-# `permute` : 0 = non pivoté (sentinelle `-1` de la source).
-#
-# Non porté en M1a : carence de rang complète (`buildHandleRankDeficiency`,
-# `buildMarkSingC`), mises à jour (`updateFT`, PF/MPF/APF), `rebuild`, add/delete
-# colonnes/lignes. `build!` rend la carence de rang sans compléter le facteur.
+# 1-based indexing: structural arrays store 1-based positions;
+# encoded values (`mr_count_before` negative, list marker `-2 - count`)
+# retain upstream's exact encoding. `permute`: 0 = unpivoted (upstream sentinel `-1`).
 
 """
     RefactorInfo
 
-Information de refactorisation (`RefactorInfo`, HStruct.h:43) : suite des pivots
-du dernier `build` réussi, rejouable par `rebuild!` sans nouvelle recherche de
-Markowitz. `pivot_row`/`pivot_var` sont 1-based ; `use` est armé par l'appelant
-(le simplexe), jamais par `build`.
+Refactorization information (`RefactorInfo`, HStruct.h:43): sequence of pivots
+from the last successful `build`, replayable by `rebuild!` without repeating Markowitz search.
+`pivot_row`/`pivot_var` are 1-based; `use` is activated by the caller (simplex engine),
+never by `build`.
 """
 mutable struct RefactorInfo
     use::Bool
@@ -126,6 +120,7 @@ mutable struct HFactor
     u_pivot_lookup::Vector{Int}
     u_pivot_index::Vector{Int}
     u_pivot_value::Vector{Float64}
+    u_pivot_inv_value::Vector{Float64}
     u_start::Vector{Int}
     u_last_p::Vector{Int}
     u_index::Vector{Int}
@@ -160,12 +155,12 @@ function HFactor(num_col::Int, num_row::Int, num_basic::Int,
     pivot_tolerance::Float64=kDefaultPivotTolerance,
     update_method::Int=kUpdateMethodFt)
     (num_col >= 0 && num_row >= 0 && num_basic >= 0) ||
-        throw(ArgumentError("dimensions négatives"))
+        throw(ArgumentError("dimensions must be non-negative"))
     (length(a_start) == num_col + 1 && length(a_index) == length(a_value) &&
      length(basic_index) == num_basic) ||
-        throw(ArgumentError("tailles de a_start/a_index/a_value/basic_index incohérentes"))
+        throw(ArgumentError("inconsistent dimensions in a_start/a_index/a_value/basic_index"))
     b_max_dim = max(num_row, num_basic)
-    # `basis_matrix_limit_size` : borne du nombre d'entrées de B (HFactor.cpp:251)
+    # basis_matrix_limit_size: upper bound on number of nonzeros in B (HFactor.cpp:251)
     counts = zeros(Int, num_row + 1)
     for i in 1:num_col
         counts[a_start[i + 1] - a_start[i] + 1] += 1
@@ -180,8 +175,7 @@ function HFactor(num_col::Int, num_row::Int, num_basic::Int,
     limit += b_max_dim
     th = clamp(pivot_threshold, kMinPivotThreshold, kMaxPivotThreshold)
     tol = clamp(pivot_tolerance, kMinPivotTolerance, kMaxPivotTolerance)
-    # `b_start[1] = 1` : premier emplacement de la première colonne (la source
-    # laisse `b_start[0] = 0`, l'offset 0-based).
+    # b_start[1] = 1: 1-based start offset of the first column (upstream b_start[0] = 0).
     b_start = zeros(Int, b_max_dim + 1)
     b_start[1] = 1
 
@@ -201,7 +195,7 @@ function HFactor(num_col::Int, num_row::Int, num_basic::Int,
         fill(-1, num_basic + 1), zeros(Int, num_row), zeros(Int, num_row),
         zeros(Int, num_row), zeros(Int, num_row), [1], zeros(Int, 0), zeros(0),
         zeros(Int, num_row + 1), zeros(Int, 0), zeros(0),
-        zeros(Int, num_row), zeros(Int, 0), zeros(0), zeros(Int, 0), zeros(Int, 0),
+        zeros(Int, num_row), zeros(Int, 0), zeros(0), zeros(0), zeros(Int, 0), zeros(Int, 0),
         zeros(Int, 0), zeros(0), 0, 0,
         zeros(Int, num_row + 1), zeros(Int, 0), zeros(Int, 0), zeros(Int, 0),
         zeros(0),
@@ -225,7 +219,7 @@ or the rank deficiency count if the basis is rank-deficient (in which case singu
 are replaced by logical slacks).
 """
 function build!(f::HFactor)
-    # Refactorisation depuis la liste de pivots du dernier build réussi.
+    # Refactorization using pivot sequence from last successful build.
     if f.refactor_info.use
         rank_deficiency = rebuild!(f)
         rank_deficiency == 0 && return 0
@@ -249,11 +243,11 @@ function build!(f::HFactor)
     else
         f.refactor_info.build_synthetic_tick = f.build_synthetic_tick
     end
-    # `HFactor.cpp:453` : `l_start[num_row] + u_last_p[num_row-1] + num_row`,
-    # soit le nombre d'entrées de L, de U, plus les pivots. En 1-based,
-    # `l_start[num_row+1] - 1` et `u_last_p[num_row] - 1` sont les comptes
-    # (u_last_p est une fin exclusive) ; pour `num_row == 0` la source lit
-    # `u_last_p[-1]` (hors bornes) : le port définit la valeur à 0.
+    # `HFactor.cpp:453`: `l_start[num_row] + u_last_p[num_row-1] + num_row`,
+    # i.e., nonzeros in L and U plus diagonal pivots. In 1-based indexing,
+    # `l_start[num_row+1] - 1` and `u_last_p[num_row] - 1` are the element counts
+    # (u_last_p is exclusive end); for `num_row == 0` upstream reads `u_last_p[-1]`:
+    # ported version safely guards to 0.
     if f.num_row > 0
         f.invert_num_el = (f.l_start[f.num_row + 1] - 1) +
                           (f.u_last_p[f.num_row] - 1) + f.num_row

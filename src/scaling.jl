@@ -1,19 +1,19 @@
-# Portage de `lp_data/HighsLpUtils.{h,cpp}` (échelles LP) — M5b : décision
-# (`considerScaling`), calcul (`scaleLp`, `equilibrationScaleMatrix`,
-# `maxValueScaleMatrix`) et application/retrait des facteurs (`HighsLp::applyScale`/
-# `unapplyScale`/`clearScale`). Le calcul reproduit les critères d'abandon tels
-# quels (`improvement_factor`), donc les mêmes matrices sont échelonnées ou non.
+# Port of `lp_data/HighsLpUtils.{h,cpp}` (LP scaling) — M5b: decision
+# (`considerScaling`), computation (`scaleLp`, `equilibrationScaleMatrix`,
+# `maxValueScaleMatrix`), and applying/unapplying factors (`HighsLp::applyScale`/
+# `unapplyScale`/`clearScale`). The implementation replicates exact abandonment
+# criteria (`improvement_factor`), so identical matrices are scaled or unscaled.
 #
-# Les facteurs sont des puissances de deux : `apply` puis `unapply` restaure la
-# matrice au bit près. Le modèle rendu à l'appelant reste non échelonné, comme
-# `Highs::run` ; `unscaleSimplex` (`HEkk`) ramène l'espace de travail dans les
-# unités originales à la sortie du solve.
+# Scale factors are powers of two: `apply` then `unapply` restores the
+# matrix bit-for-bit. The model returned to the caller remains unscaled, matching
+# `Highs::run`; `unscaleSimplex` (`HEkk`) converts working space back to original
+# units on exiting the solve.
 #
-# Non porté : échelles de coûts utilisateur (`user_objective_scale`/
-# `user_bound_scale`), `scaleSimplexCost`, rapports/analyse.
+# Not ported: user cost scales (`user_objective_scale`/`user_bound_scale`),
+# `scaleSimplexCost`, reporting/analysis.
 
 """
-`HighsLp::clearScale` : oublie les facteurs (stratégie Off, pas d'échelle).
+`HighsLp::clearScale`: clears scale factors (Off strategy, unscaled).
 """
 function clear_scale!(lp::SimplexLp)
     empty!(lp.scale.col)
@@ -21,10 +21,9 @@ function clear_scale!(lp::SimplexLp)
     lp.scale = Scale()
     return lp
 end
-
 """
-`HighsLp::applyScale` : applique les facteurs au modèle (`is_scaled`) s'ils
-sont connus ; sans effet s'ils sont déjà appliqués ou absents.
+`HighsLp::applyScale`: applies scale factors to model (`is_scaled`) if
+present; no-op if already applied or absent.
 """
 function apply_lp_scale!(lp::SimplexLp)
     lp.is_scaled && return lp
@@ -45,8 +44,8 @@ function apply_lp_scale!(lp::SimplexLp)
 end
 
 """
-`HighsLp::unapplyScale` : retire les facteurs du modèle (le calcul inverse est
-exact : puissances de deux).
+`HighsLp::unapplyScale`: removes scale factors from model (inverse operation
+is exact: powers of two).
 """
 function unapply_lp_scale!(lp::SimplexLp)
     lp.is_scaled || return lp
@@ -57,7 +56,7 @@ function unapply_lp_scale!(lp::SimplexLp)
         lp.col_cost[iCol] /= scale.col[iCol]
     end
     for iRow ∈ 1:lp.num_row
-        lp.row_lower[iRow] /= scale.row[iRow]
+        lp.row_lower[iRow] *= scale.row[iRow]
         lp.row_upper[iRow] /= scale.row[iRow]
     end
     unapply_scale!(lp.a_matrix, scale)
@@ -65,7 +64,7 @@ function unapply_lp_scale!(lp::SimplexLp)
     return lp
 end
 
-"""`HighsLp::clearScaling` — retrait puis oubli des facteurs."""
+"""`HighsLp::clearScaling` — remove and clear scale factors."""
 function clear_scaling!(lp::SimplexLp)
     unapply_lp_scale!(lp)
     clear_scale!(lp)
@@ -73,13 +72,13 @@ function clear_scaling!(lp::SimplexLp)
 end
 
 """
-    equilibration_scale_matrix!(lp, strategy) -> Bool
+    equilibration_scale_matrix!(lp, strategy, allowed_matrix_scale_factor) -> Bool
 
-`equilibrationScaleMatrix` : six balayages d'équilibrage colonne/ligne par
-`1/sqrt(min·max)`, facteurs arrondis à la puissance de deux la plus proche et
-bornés par `2^±allowed_matrix_scale_factor`, application à la matrice puis
-critère d'abandon (sauf `ForcedEquilibration`) : le produit des améliorations
-moyenne, extrême et du rapport max/min doit valoir au moins 1.
+`equilibrationScaleMatrix`: six equilibration passes across columns/rows using
+`1/sqrt(min·max)`, factors rounded to nearest power of two and bounded by
+`2^±allowed_matrix_scale_factor`, applied to matrix followed by abandonment check
+(except `ForcedEquilibration`): product of average, extreme, and max/min ratio
+improvements must be >= 1.
 """
 function equilibration_scale_matrix!(lp::SimplexLp, strategy::Int,
     allowed_matrix_scale_factor::Int)
@@ -89,8 +88,8 @@ function equilibration_scale_matrix!(lp::SimplexLp, strategy::Int,
     m = lp.a_matrix
     col_cost = lp.col_cost
 
-    # Plutôt que de conserver les statistiques de la source (pour son rapport),
-    # seuls les agrégats qui décident de l'abandon sont calculés.
+    # Rather than retaining full statistics from source (for reporting),
+    # only the aggregates that govern abandonment decisions are computed.
     original_matrix_min_value = kHighsInf
     original_matrix_max_value = 0.0
     for k ∈ 1:num_nz(m)
@@ -118,7 +117,7 @@ function equilibration_scale_matrix!(lp::SimplexLp, strategy::Int,
     row_min_value = fill(finite_infinity, num_row)
     row_max_value = fill(1 / finite_infinity, num_row)
     for _ ∈ 1:6
-        # Échelle de colonne, collecte des bornes de lignes.
+        # Column scaling, collect row bounds.
         for iCol ∈ 1:num_col
             col_min_value = finite_infinity
             col_max_value = 1 / finite_infinity
@@ -142,7 +141,7 @@ function equilibration_scale_matrix!(lp::SimplexLp, strategy::Int,
                 row_max_value[iRow] = max(row_max_value[iRow], value)
             end
         end
-        # Échelle de ligne.
+        # Row scaling.
         for iRow ∈ 1:num_row
             row_equilibration =
                 1 / sqrt(row_min_value[iRow] * row_max_value[iRow])
@@ -152,7 +151,7 @@ function equilibration_scale_matrix!(lp::SimplexLp, strategy::Int,
         fill!(row_min_value, finite_infinity)
         fill!(row_max_value, 1 / finite_infinity)
     end
-    # Puissance de deux la plus proche.
+    # Nearest power of two.
     log2 = log(2.0)
     for iCol ∈ 1:num_col
         col_scale[iCol] = 2.0^floor(log(col_scale[iCol]) / log2 + 0.5)
@@ -160,7 +159,7 @@ function equilibration_scale_matrix!(lp::SimplexLp, strategy::Int,
     for iRow ∈ 1:num_row
         row_scale[iRow] = 2.0^floor(log(row_scale[iRow]) / log2 + 0.5)
     end
-    # Application à la matrice, avec les statistiques d'équilibrage avant/après.
+    # Apply to matrix, with before/after equilibration statistics.
     matrix_min_value = finite_infinity
     matrix_max_value = 0.0
     min_original_col_equilibration = finite_infinity
@@ -275,11 +274,11 @@ function equilibration_scale_matrix!(lp::SimplexLp, strategy::Int,
 end
 
 """
-    max_value_scale_matrix!(lp) -> Bool
+    max_value_scale_matrix!(lp, allowed_matrix_scale_factor) -> Bool
 
-`maxValueScaleMatrix` (stratégie 4) : échelle de ligne `2^round(log2(1/max))`,
-puis de colonne de même, application, et abandon si le rapport max/min des
-valeurs ne s'améliore pas (`<= 1`).
+`maxValueScaleMatrix` (strategy 4): row scaling by `2^round(log2(1/max))`,
+then column scaling similarly, apply scaling, and abort if the max/min ratio
+of values does not improve (`<= 1`).
 """
 function max_value_scale_matrix!(lp::SimplexLp,
     allowed_matrix_scale_factor::Int)
@@ -362,11 +361,11 @@ end
     scale_lp!(lp; strategy, allowed_matrix_scale_factor, force_scaling=false)
         -> Bool
 
-`scaleLp` : détermine les facteurs (`equilibration` ou `maxValue`) puis applique
-bornes, coûts et matrice si la matrice est échelonnée ; `strategy == Choose`
-part en `ForcedEquilibration`. La plage `[0.2, 5]` court-circuite l'échelle.
-La borne `allowed_matrix_scale_factor` est passée comme les options de la
-source (le LP ne les porte pas).
+`scaleLp`: determines scale factors (`equilibration` or `maxValue`) then scales
+bounds, costs and matrix if the matrix is scaled; `strategy == Choose` defaults to
+`ForcedEquilibration`. The range `[0.2, 5]` short-circuits scaling.
+The bound `allowed_matrix_scale_factor` is passed from options (the LP struct
+does not carry options).
 """
 function scale_lp!(lp::SimplexLp; strategy::Int,
     allowed_matrix_scale_factor::Int, force_scaling::Bool=false)
@@ -408,7 +407,7 @@ function scale_lp!(lp::SimplexLp; strategy::Int,
             clear_scaling!(lp)
         end
     end
-    # La source consigne la stratégie essayée même sans échelle appliquée.
+    # The source records the attempted strategy even when scaling was not applied.
     lp.scale = Scale(lp.scale.col, lp.scale.row, lp.scale.cost,
         lp.scale.has_scaling, lp.scale.num_col, lp.scale.num_row,
         use_scale_strategy)
@@ -418,10 +417,9 @@ end
 """
     consider_scaling!(e) -> Bool
 
-`considerScaling` : calcule de nouveaux facteurs si la stratégie a changé (ou
-n'a jamais été essayée), sinon ré-applique les facteurs connus ; retire les
-échelles si elles ne sont plus permises. Rend `true` si de nouveaux facteurs
-ont été déterminés.
+`considerScaling`: computes new scale factors if strategy changed (or has never
+been attempted), otherwise reapplies known scale factors; removes scaling if no
+longer allowed. Returns `true` if new factors were computed.
 """
 function consider_scaling!(e::SimplexEngine)
     lp = e.lp
@@ -452,8 +450,8 @@ end
 """
     unscale_simplex!(e)
 
-`HEkk::unscaleSimplex` : ramène l'espace de travail et les tableaux de base
-dans les unités originales (l'inverse des échelles appliquées au LP).
+`HEkk::unscaleSimplex`: scales working space and base arrays back to original
+units (the inverse of scales applied to the LP).
 """
 function unscale_simplex!(e::SimplexEngine)
     lp = e.lp
@@ -500,11 +498,11 @@ end
 """
     restore_scale!(e)
 
-Sortie de solve du port : `unscaleSimplex` puis retrait des échelles du modèle
-(`moveBackLpAndUnapplyScaling`). La source garde l'espace de travail échelonné
-et ne retire les échelles que du `HighsLp` ; le port ramène l'état complet dans
-les unités originales, les valeurs rapportées étant identiques. Les facteurs
-restent mémorisés pour le solve suivant (`considerScaling` les ré-applique).
+Post-solve exit: `unscaleSimplex` followed by unapplying scales from the model
+(`moveBackLpAndUnapplyScaling`). The C++ source keeps the workspace scaled and
+only removes scales from `HighsLp`; this port restores full state to original units,
+yielding identical reported values. Factors remain cached for the next solve
+(`considerScaling` reapplies them).
 """
 function restore_scale!(e::SimplexEngine)
     e.lp.is_scaled || return e

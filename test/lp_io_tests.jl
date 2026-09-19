@@ -57,4 +57,29 @@ End
     status_rt, obj_rt, _ = solve_lp(lp_roundtrip)
     @test status_rt == TinyHiGHS.kOptimal
     @test obj_rt ≈ obj1 atol=1e-12
+
+    # Regression: objective-first LP text must not permute canonical c0..cN
+    # columns.  This is the layout used by the warm-start replay corpus.
+    canonical_str = """
+Maximize
+ obj: 5 c2
+Subject To
+ r0: c0 + c1 >= 0
+Bounds
+ c0 = 7
+ c1 = 8
+ c2 = 9
+End
+"""
+    canonical = read_lp(IOBuffer(canonical_str))
+    @test canonical.col_lower == [7.0, 8.0, 9.0]
+    @test canonical.col_upper == [7.0, 8.0, 9.0]
+    @test canonical.col_cost == [0.0, 0.0, 5.0]
+
+    canonical_buf = IOBuffer()
+    write_lp(canonical_buf, canonical)
+    canonical_roundtrip = read_lp(IOBuffer(String(take!(canonical_buf))))
+    @test canonical_roundtrip.col_lower == canonical.col_lower
+    @test canonical_roundtrip.col_upper == canonical.col_upper
+    @test canonical_roundtrip.col_cost == canonical.col_cost
 end

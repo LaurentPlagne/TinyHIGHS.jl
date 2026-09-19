@@ -1,11 +1,10 @@
-# Portage de `highs/util/HVectorBase.{h,cpp}` (licence MIT, HiGHS).
+# Port of `highs/util/HVectorBase.{h,cpp}` (MIT License, HiGHS).
 import Base: copy!
 #
-# Convention : tous les indices sont **1-based** (`array[i]`), contrairement à
-# la source qui est 0-based ; `count < 0` garde le sens « liste d'indices
-# inconnue » (ce n'est pas un index). `index[1:count]` porte les positions des
-# valeurs potentiellement non nulles, sans garantie d'ordre ni de non-nullité
-# (le C++ ne suit pas les annulations, cf. `saxpy!`).
+# Convention: all indices are 1-based (`array[i]`), whereas upstream C++ is
+# 0-based. `count < 0` retains the meaning "unknown / dense index list" (not
+# an index). `index[1:count]` stores the positions of potentially non-zero
+# values without ordering or non-zero guarantee (C++ does not prune cancellations, cf. `saxpy!`).
 
 """
     HVector(size::Int)

@@ -1,15 +1,13 @@
-# Portage de `simplex/HEkkDualRow.{h,cpp}` (licence MIT, HiGHS) — test de ratio
-# dual (BFRT) et choix de la colonne entrante. Non porté : tri par tas
-# (`chooseFinalWorkGroupHeap`, `use_quad_sort` est constant dans la source),
-# Devex (`computeDevexWeight`), `chooseJoinpack` (PAMI).
+# Port of `simplex/HEkkDualRow.{h,cpp}` (MIT License, HiGHS) — dual ratio
+# test (BFRT) and incoming column selection.
 #
-# Les paires `(iCol, valeur)` de `workData` suivent la source : elles sont
-# permutées en place puis triées par `iCol` avant `updateFlip`.
+# Pairs `(iCol, value)` in `workData` follow the source: they are permuted
+# in-place then sorted by `iCol` before `updateFlip`.
 
 """
     DualRow(engine)
 
-Miroir de `HEkkDualRow` : données du ratio test dual.
+Mirror of `HEkkDualRow`: data structures and work buffers for dual ratio test.
 """
 mutable struct DualRow
     engine::SimplexEngine
@@ -42,7 +40,7 @@ function clear!(d::DualRow)
     return d
 end
 
-"""Réinitialise un `DualRow` pour une nouvelle résolution — miroir du constructeur."""
+"""Reinitializes a `DualRow` for a new solve — mirrors constructor."""
 function reset!(r::DualRow, e::SimplexEngine)
     num_tot = e.lp.num_col + e.lp.num_row
     r.engine = e
@@ -66,7 +64,7 @@ function reset!(r::DualRow, e::SimplexEngine)
     return r
 end
 
-"""`HEkkDualRow::chooseMakepack` — `offset = num_col` pour `row_ep`."""
+"""`HEkkDualRow::chooseMakepack` — `offset = num_col` for `row_ep`."""
 function choose_makepack!(d::DualRow, row::HVector, offset::Int)
     for i ∈ 1:row.count
         index = row.index[i]
@@ -108,7 +106,7 @@ function choose_final!(d::DualRow)
     e = d.engine
     info = e.info
     basis = e.basis
-    # 1. Réduction par grand pas BFRT.
+    # 1. BFRT large step reduction.
     full_count = d.workCount
     d.workCount = 0
     total_change = 0.0
@@ -129,9 +127,9 @@ function choose_final!(d::DualRow)
         select_theta *= 10
         (total_change >= total_delta || d.workCount == full_count) && break
     end
-    # 2. Tri quadratique des groupes dégénérés.
+    # 2. Quadratic sort of degenerate groups.
     choose_final_work_group_quad!(d) || return -1
-    # 3. Choix du plus grand alpha.
+    # 3. Selection of largest alpha.
     break_index, break_group = choose_final_large_alpha!(d, d.workCount,
         d.workData, d.workGroup)
     move_out = d.workDelta < 0 ? -1 : 1
@@ -144,7 +142,7 @@ function choose_final!(d::DualRow)
     else
         d.workTheta = 0.0
     end
-    # 4. Variables à retourner (BFRT) : celles du groupe final.
+    # 4. Variables to flip (BFRT): those in the final group.
     d.workCount = 0
     for i ∈ 1:d.workGroup[break_group + 1]
         iCol = d.workData[i][1]
@@ -155,12 +153,12 @@ function choose_final!(d::DualRow)
     if d.workTheta == 0
         d.workCount = 0
     end
-    # 5. Tri par colonne (accès ordonné à A dans `updateFlip`).
+    # 5. Column sort (ordered access to A in `updateFlip`).
     sort_work_data!(d.workData, d.workCount)
     return 0
 end
 
-"""Tri par insertion in-place de `workData` sur les `n` premiers éléments (zéro allocation)."""
+"""In-place insertion sort of `workData` over the first `n` elements (zero allocation)."""
 function sort_work_data!(workData::Vector{Tuple{Int,Float64}}, n::Int)
     @inbounds for i ∈ 2:n
         key = workData[i]
@@ -209,7 +207,7 @@ function choose_final_work_group_quad!(d::DualRow)
         select_theta = remain_theta
         if d.workCount == prev_work_count && prev_select_theta == select_theta &&
            prev_remain_theta == remain_theta
-            return false                # boucle sans progrès : échec de CHUZC
+            return false                # loop without progress: CHUZC failure
         end
         prev_work_count = d.workCount
         prev_remain_theta = remain_theta
@@ -222,8 +220,8 @@ end
 """
     choose_final_large_alpha!(d, pass_work_count, pass_work_data, pass_work_group)
 
-`HEkkDualRow::chooseFinalLargeAlpha` : dernier groupe dont le maximum dépasse
-`min(0.1 * max, 1)` ; égalité tranchée par `numTotPermutation`.
+`HEkkDualRow::chooseFinalLargeAlpha`: last group whose maximum exceeds
+`min(0.1 * max, 1)`; ties broken by `numTotPermutation`.
 """
 function choose_final_large_alpha!(d::DualRow, pass_work_count::Int,
     pass_work_data::Vector{Tuple{Int,Float64}}, pass_work_group::Vector{Int})
@@ -264,8 +262,8 @@ end
 """
     update_flip!(d, bfrtColumn)
 
-`HEkkDualRow::updateFlip` : retourne au bord les variables flippées et
-accumule le second membre FTRAN-BFRT.
+`HEkkDualRow::updateFlip`: flips variables to opposite bound and
+accumulates the FTRAN-BFRT RHS column.
 """
 function update_flip!(d::DualRow, bfrtColumn::HVector)
     e = d.engine
@@ -302,7 +300,7 @@ function update_dual!(d::DualRow, theta::Float64)
     return d
 end
 
-"""`HEkkDualRow::createFreelist` — colonnes non basiques libres."""
+"""`HEkkDualRow::createFreelist` — free nonbasic columns."""
 function create_freelist!(d::DualRow)
     e = d.engine
     empty!(d.freeList)
@@ -316,7 +314,7 @@ function create_freelist!(d::DualRow)
     return d
 end
 
-"""`HEkkDualRow::createFreemove` — mouvement provisoire des colonnes libres."""
+"""`HEkkDualRow::createFreemove` — temporary movement of free columns."""
 function create_freemove!(d::DualRow, row_ep::HVector)
     isempty(d.freeList) && return d
     e = d.engine
@@ -349,8 +347,8 @@ function delete_freelist!(d::DualRow, iVar::Int)
 end
 
 """
-`HEkkDualRow::computeDevexWeight` : poids Devex exact de la rangée pivot, somme
-des carrés des entrées du paquet sur l'ensemble de référence (`devex_index`).
+`HEkkDualRow::computeDevexWeight`: exact Devex weight of the pivot row, sum
+of squared pack entries over the reference framework (`devex_index`).
 """
 function compute_devex_weight!(d::DualRow)
     e = d.engine

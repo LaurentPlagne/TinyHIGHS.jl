@@ -40,7 +40,9 @@ function replay_sequence_tinyhighs(base_lp_path::String, ops_path::String)
     
     solves_count = 0
     total_iters = 0
+    iteration_previous = 0
     last_obj = 0.0
+    last_status = TinyHiGHS.kNotset
     
     t0 = time_ns()
     for line in eachline(ops_path)
@@ -97,14 +99,20 @@ function replay_sequence_tinyhighs(base_lp_path::String, ops_path::String)
             else
                 restore_scale!(engine)
             end
-            total_iters += engine.iteration_count
+            # `iteration_count` is cumulative across warm starts; the C++
+            # replay reports the simplex iterations of each solve. Accumulate
+            # the per-solve delta to avoid counting the prefix repeatedly.
+            total_iters += engine.iteration_count - iteration_previous
+            iteration_previous = engine.iteration_count
             last_obj = engine.info.primal_objective_value
+            last_status = engine.model_status
         elseif op == "end"
             break
         end
     end
     elapsed_ms = (time_ns() - t0) / 1e6
-    return (time_ms=elapsed_ms, solves=solves_count, iters=total_iters, last_obj=last_obj)
+    return (time_ms=elapsed_ms, solves=solves_count, iters=total_iters,
+        last_obj=last_obj, status=last_status)
 end
 
 """

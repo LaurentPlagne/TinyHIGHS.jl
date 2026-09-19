@@ -1,16 +1,14 @@
-# Portage de `simplex/HEkkDualRHS.{h,cpp}` (licence MIT, HiGHS) — liste
-# d'infaisabilités primales et mises à jour de `baseValue` pour le simplexe
-# dual. Non porté : CHUZR multiple (`chooseMulti*`, PAMI) et le rapport
-# `assessOptimality`.
+# Port of `simplex/HEkkDualRHS.{h,cpp}` (MIT License, HiGHS) — list
+# of primal infeasibilities and updates to `baseValue` for the dual simplex.
+# Multiple CHUZR (`chooseMulti*`, PAMI) and `assessOptimality` report are omitted.
 #
-# `work_infeasibility[iRow]` porte le carré de l'infaisabilité
-# (`store_squared_primal_infeasibility = true`, valeur d'`initialiseControl`
-# quand l'option `less_infeasible_DSE_check` est fausse, le défaut).
+# `work_infeasibility[iRow]` holds squared infeasibility
+# (`store_squared_primal_infeasibility = true`, default setting from `initialiseControl`).
 
 """
     DualRHS(engine)
 
-Miroir de `HEkkDualRHS` : liste des rangées primalement infaisables.
+Dual simplex RHS manager (`HEkkDualRHS`): tracks list of primally infeasible basic rows.
 """
 mutable struct DualRHS
     engine::SimplexEngine
@@ -27,7 +25,7 @@ function DualRHS(e::SimplexEngine)
         zeros(num_row))
 end
 
-"""Réinitialise un `DualRHS` pour une nouvelle résolution — miroir du constructeur."""
+"""Reinitializes `DualRHS` for a new solve — mirrors the constructor."""
 function reset!(rhs::DualRHS, e::SimplexEngine)
     num_row = e.lp.num_row
     rhs.engine = e
@@ -47,17 +45,17 @@ end
 """
     choose_normal!(d)
 
-`HEkkDualRHS::chooseNormal` : rangée de mérite maximal (infaisabilité / poids,
-poids unitaires en Dantzig), en partant d'un indice tiré au hasard — l'ordre de
-balayage est découpé en deux sections `[start, fin) ∪ [0, start)`. Rend
-`kNoRowChosen` si la liste est vide.
+`HEkkDualRHS::chooseNormal`: selects row with maximum merit (infeasibility / weight,
+unit weights for Dantzig), starting from a randomized index — scan order
+is split into two sections `[start, stop) ∪ [0, start)`. Returns `kNoRowChosen`
+if list is empty.
 """
 function choose_normal!(d::DualRHS)
     d.workCount == 0 && return kNoRowChosen
     e = d.engine
     edge_weight = e.dual_edge_weight
     if d.workCount < 0
-        # Mode dense : `workCount = -numRow`.
+        # Dense mode: workCount = -numRow.
         num_row = -d.workCount
         random_start = integer(e.random, num_row)
         best_merit = 0.0
@@ -78,7 +76,7 @@ function choose_normal!(d::DualRHS)
         end
         return best_index
     end
-    # Mode creux.
+    # Sparse mode.
     random_start = integer(e.random, d.workCount)
     best_merit = 0.0
     best_index = kNoRowChosen
@@ -109,9 +107,9 @@ end
 """
     update_primal!(d, column, theta)
 
-`HEkkDualRHS::updatePrimal` : `baseValue .-= theta * column` et remise à jour
-des infaisabilités. Rend `false` si une valeur primale dépasse
-`kExcessivePrimalValue` (l'appelant arme alors une ré-inversion).
+`HEkkDualRHS::updatePrimal`: performs `baseValue .-= theta * column` and refreshes
+infeasibilities. Returns `false` if any primal value exceeds `kExcessivePrimalValue`
+(triggering refactorization in the caller).
 """
 function update_primal!(d::DualRHS, column::HVector, theta::Float64)
     e = d.engine
@@ -140,7 +138,7 @@ function update_primal!(d::DualRHS, column::HVector, theta::Float64)
     return num_excessive == 0
 end
 
-"""`HEkkDualRHS::updatePivots` — valeur de la rangée pivot et infaisabilité."""
+"""`HEkkDualRHS::updatePivots` — updates pivot row value and infeasibility."""
 function update_pivots!(d::DualRHS, iRow::Int, value::Float64)
     info = d.engine.info
     tp = d.engine.options.primal_feasibility_tolerance
@@ -156,9 +154,9 @@ function update_pivots!(d::DualRHS, iRow::Int, value::Float64)
     return d
 end
 
-"""`HEkkDualRHS::updateInfeasList` — ajoute les rangées devenues infaisables."""
+"""`HEkkDualRHS::updateInfeasList` — appends rows that became infeasible."""
 function update_infeas_list!(d::DualRHS, column::HVector)
-    d.workCount < 0 && return d          # dense : rien à tenir à jour
+    d.workCount < 0 && return d          # dense mode: nothing to maintain
     e = d.engine
     edge_weight = e.dual_edge_weight
     if d.workCutoff <= 0
@@ -205,10 +203,9 @@ end
 """
     create_infeas_list!(d, columnDensity)
 
-`HEkkDualRHS::createInfeasList` : reconstruit la liste, avec bascule
-hyper-creuse quand elle est grande et la colonne peu dense (mérite
-`infaisabilité / poids`, coupure par `nth_element`), puis mode dense au-delà de
-20 % des rangées.
+`HEkkDualRHS::createInfeasList`: rebuilds the infeasibility list, switching
+to hyper-sparse when the list is large and column density is low (merit cutoff
+via `partialsort!`), falling back to dense mode when exceeding 20% of rows.
 """
 function create_infeas_list!(d::DualRHS, columnDensity::Float64)
     e = d.engine
@@ -237,7 +234,7 @@ function create_infeas_list!(d::DualRHS, columnDensity::Float64)
                 dwork[i_put] = -my_merit
             end
         end
-        # `nth_element` : seule la valeur de rang `icutoff` (0-based) sert.
+        # nth_element equivalent: only the merit cutoff value at rank icutoff is needed.
         cut_merit = -partialsort!(view(dwork, 1:i_put), icutoff + 1)
         d.workCutoff = min(max_merit * 0.99999, cut_merit * 1.00001)
         fill!(d.workMark, 0x00)

@@ -1,9 +1,9 @@
-# Portage partiel de `highs/simplex/SimplexStruct.h` (licence MIT, HiGHS).
+# Partial port of `highs/simplex/SimplexStruct.h` (MIT License, HiGHS).
 #
-# Tailles conformes à la source : `basicIndex` a `num_row` entrées, les statuts
-# couvrent `num_col + num_row` variables (séquence : colonnes `1:num_col`, lignes
-# `num_col+1:num_col+num_row`). `nonbasicFlag`/`nonbasicMove` sont des **valeurs
-# encodées** (0/1 et -1/0/1), pas des indices : ne pas les décaler.
+# Dimensions match upstream: `basicIndex` has `num_row` entries, statuses
+# cover `num_col + num_row` variables (sequence: columns `1:num_col`, rows
+# `num_col+1:num_col+num_row`). `nonbasicFlag`/`nonbasicMove` are encoded
+# values (0/1 and -1/0/1), not indices: do not offset them.
 
 """
     SimplexBasis(num_col, num_row)
@@ -51,9 +51,9 @@ end
 SimplexStatus() = SimplexStatus(false, false, false, false, false, false, false,
     false)
 
-"""Réinitialise une base — `SimplexBasis::setup` (HSimplex.cpp:36)."""
+"""Reinitializes a basis — `SimplexBasis::setup` (HSimplex.cpp:36)."""
 function setup!(basis::SimplexBasis, num_col::Int, num_row::Int)
-    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("tailles négatives"))
+    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions must be non-negative"))
     resize!(basis.basicIndex, num_row)
     fill!(basis.basicIndex, 0)
     resize!(basis.nonbasicFlag, num_col + num_row)
@@ -64,7 +64,7 @@ function setup!(basis::SimplexBasis, num_col::Int, num_row::Int)
     return basis
 end
 
-"""Vide une base — `SimplexBasis::clear` (HSimplex.cpp:26)."""
+"""Clears a basis — `SimplexBasis::clear` (HSimplex.cpp:26)."""
 function clear!(basis::SimplexBasis)
     empty!(basis.basicIndex)
     empty!(basis.nonbasicFlag)
@@ -73,7 +73,7 @@ function clear!(basis::SimplexBasis)
     return basis
 end
 
-"""Copie indépendante d'une base (`SimplexBasis` est mutable)."""
+"""Independent copy of a basis (`SimplexBasis` is mutable)."""
 function copy_basis(basis::SimplexBasis)
     return SimplexBasis(copy(basis.basicIndex), copy(basis.nonbasicFlag),
         copy(basis.nonbasicMove), basis.hash)
@@ -93,9 +93,8 @@ end
 """
     BadBasisChange(row_out, variable_out, variable_in, reason, taboo)
 
-Enregistrement de `HighsSimplexBadBasisChangeRecord` : changement de base
-interdit (tabou) ou simplement suspect, avec la valeur de rangée sauvegardée
-par `applyTabooRowOut`.
+Record of `HighsSimplexBadBasisChangeRecord`: prohibited (taboo) or suspicious
+basis change, along with the saved row value from `applyTabooRowOut`.
 """
 mutable struct BadBasisChange
     taboo::Bool
@@ -113,9 +112,9 @@ BadBasisChange(row_out::Int, variable_out::Int, variable_in::Int, reason::Int,
 """
     RayRecord(index, sign)
 
-`HighsRayRecord` réduit au rayon primal : `savePrimalRay` y note la variable
-entrante et le signe opposé à son mouvement. Le vecteur du rayon et le rayon
-dual (rapport, export) ne sont pas portés.
+`HighsRayRecord` reduced to primal ray: `savePrimalRay` records the entering
+variable and the sign opposite to its movement. The full ray vector and dual ray
+are not ported.
 """
 mutable struct RayRecord
     index::Int
@@ -165,7 +164,7 @@ mutable struct SimplexInfo
     num_dual_infeasibilities::Int
     max_dual_infeasibility::Float64
     sum_dual_infeasibilities::Float64
-    # Champs M3a, dans l'ordre de `HighsSimplexInfo`.
+    # M3a fields, in upstream `HighsSimplexInfo` order.
     workLowerShift::Vector{Float64}
     workUpperShift::Vector{Float64}
     primal_objective_value::Float64
@@ -182,8 +181,8 @@ mutable struct SimplexInfo
     dual_col_density::Float64
     col_basic_feasibility_change_density::Float64
     row_basic_feasibility_change_density::Float64
-    # Champs M3b (dual) : vecteurs aléatoires, compteurs de phase et options
-    # recopiées par `setSimplexOptions`.
+    # M3b (dual) fields: random vectors, phase counters, and options
+    # copied by `setSimplexOptions`.
     numTotRandomValue::Vector{Float64}
     numTotPermutation::Vector{Int}
     numColPermutation::Vector{Int}
@@ -211,7 +210,7 @@ mutable struct SimplexInfo
     allow_cost_shifting::Bool
     allow_cost_perturbation::Bool
     allow_bound_perturbation::Bool
-    # Contrôle DSE/Devex (`switchToDevex`).
+    # DSE / Devex control (`switchToDevex`).
     allow_dual_steepest_edge_to_devex_switch::Bool
     control_iteration_count0::Int
     costly_DSE_frequency::Float64
@@ -219,8 +218,8 @@ mutable struct SimplexInfo
     costly_DSE_measure::Float64
     average_log_low_DSE_weight_error::Float64
     average_log_high_DSE_weight_error::Float64
-    # Robustesse : base de backtracking (`getBacktrackingBasis`) et drapeau de
-    # reprise de phase après restauration.
+    # Robustness: backtracking basis (`getBacktrackingBasis`) and flag
+    # indicating phase resumption after restoration.
     valid_backtracking_basis::Bool
     backtracking_basis::SimplexBasis
     backtracking_basis_costs_shifted::Bool
@@ -235,7 +234,7 @@ mutable struct SimplexInfo
 end
 
 function SimplexInfo(num_col::Int, num_row::Int)
-    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("tailles négatives"))
+    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions must be non-negative"))
     n = num_col + num_row
     return SimplexInfo(zeros(n), zeros(n), zeros(n), zeros(n), zeros(n), zeros(n),
         zeros(n), zeros(num_row), zeros(num_row), zeros(num_row),
@@ -254,12 +253,11 @@ function SimplexInfo(num_col::Int, num_row::Int)
 end
 
 """
-Redimensionne et remet à zéro ; les compteurs d'infaisabilité repassent à -1.
-Les densités reprennent celles d'`initialiseControl` (`dual_col_density = 1` :
-les coûts sont supposés non nuls).
+Resizes and resets all buffers to zero; infeasibility counters reset to -1.
+Densities mirror `initialiseControl` (`dual_col_density = 1`: costs assumed non-zero).
 """
 function setup!(info::SimplexInfo, num_col::Int, num_row::Int)
-    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("tailles négatives"))
+    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions must be non-negative"))
     n = num_col + num_row
     for v ∈ (info.workCost, info.workDual, info.workShift, info.workLower,
         info.workUpper, info.workRange, info.workValue, info.workLowerShift,
@@ -341,7 +339,7 @@ function setup!(info::SimplexInfo, num_col::Int, num_row::Int)
     return info
 end
 
-"""Vide les vecteurs de travail et remet les compteurs d'infaisabilité à -1."""
+"""Clears working vectors and resets infeasibility counters to -1."""
 function clear!(info::SimplexInfo)
     for v ∈ (info.workCost, info.workDual, info.workShift, info.workLower,
         info.workUpper, info.workRange, info.workValue, info.baseLower,

@@ -13,7 +13,7 @@ In this regime:
 2. **Dynamic Memory Allocation**: In standard C++ solvers, each solve (even when warm-started) reallocates and resizes internal `std::vector` buffers across solver layers.
 3. **Latency Matters More Than Throughput**: The bottleneck shifts from matrix factorization complexity to memory allocation latency, cache locality, and function call overhead.
 
-**Goal of TinyHiGHS.jl**: Achieve microsecond-level solve times (under 50 µs) with **strictly zero heap allocations** during repeated resolves, while retaining **100% bit-for-bit numerical equivalence** with HiGHS.
+**Goal of TinyHiGHS.jl**: Achieve microsecond-level solve times (under 50 µs) with **strictly zero heap allocations** during repeated resolves, while retaining a **bit-for-bit reference path** compatible with HiGHS. The optional branchless reciprocal path is validated with a one-ULP bound for arbitrary pivots.
 
 ---
 
@@ -125,7 +125,8 @@ Unlike C++ which relies on templates, inheritance, and macros, TinyHiGHS embrace
 ### D. Standalone Native LP I/O
 
 The original C++ port was coupled to internal data loaders. TinyHiGHS features an entirely autonomous CPLEX `.lp` parser and serializer implemented in **100% pure Julia stdlib**:
-- Zero dependencies on MathOptInterface, JuMP, or external parsers.
+- The core has no mandatory dependency on MathOptInterface, JuMP, or external
+  parsers; an optional MOI extension is provided for standard modeling tools.
 - Reads `.lp` files directly into CSC matrix structures.
 - Allows immediate standalone benchmarking and testing.
 
@@ -141,4 +142,4 @@ The original C++ port was coupled to internal data loaders. TinyHiGHS features a
 | **LP File I/O** | External / C++ test harnesses | **Native `read_lp` / `write_lp` in Julia stdlib** |
 | **Type Inférence** | Partial `Union` returns | **100% `@inferred` type stable** |
 | **Solve Time (`sequence_small`)** | ~223 µs / solve | **32.4 µs / solve (6.9x faster)** |
-| **Numerical Consistency** | Exact IEEE-754 match | **Exact IEEE-754 match (0 ULP gap)** |
+| **Numerical Consistency** | Exact IEEE-754 match | **Exact reference path; branchless path <=1 ULP on arbitrary pivots** |

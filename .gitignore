@@ -2,6 +2,7 @@
 *.jl.cov
 *.jl.*.cov
 *.jl.mem
+*.jl.*.mem
 docs/build/
 Manifest.toml
 
@@ -21,5 +22,10 @@ oracle/build/
 *.log
 scratch/
 checks.json
+
+# Instructions locales de l'agent de développement (ne pas publier)
+/AGENTS.md
+/julia-recommandations.md
+
 contrib_highs/cpp/replay_sequence
 contrib_highs/cpp/replay_sequence_original

@@ -1,12 +1,12 @@
-# Portage de `highs/util/HighsSparseMatrix.{h,cpp}` — sous-ensemble M2 :
-# structure colwise/rowwise, produits, `computeDot`/`collectAj` et pricing
-# (`priceByColumn`, `priceByRow`, `priceByRowWithSwitch`) en précision double
-# **et** quad (`HighsCDouble`, `HighsSparseVectorSum`).
+# Port of `highs/util/HighsSparseMatrix.{h,cpp}` — M2 subset:
+# columnwise/rowwise structure, matrix products, `computeDot`/`collectAj`,
+# and pricing (`priceByColumn`, `priceByRow`, `priceByRowWithSwitch`) in double
+# and compensated quad precision (`HighsCDouble`, `HighsSparseVectorSum`).
 #
-# Non porté ici : ajout/suppression de colonnes/lignes.
+# Column/row additions and deletions are omitted.
 #
-# Convention 1-based : `start` porte des positions (1 = premier élément),
-# `index` des indices 1-based ; `format` ∈ (kColwise, kRowwise,
+# 1-based indexing: `start` contains element positions (1 = first element),
+# `index` contains 1-based indices; `format` ∈ (kColwise, kRowwise,
 # kRowwisePartitioned).
 
 const kColwise = 1
@@ -16,14 +16,12 @@ const kRowwisePartitioned = 3
 """
     SparseVectorSum()
 
-`HighsSparseVectorSum` : accumulation compensée (`HighsCDouble`) d'un vecteur
-creux pendant le pricing rowwise quad. `values` est dense et `nonzeroinds`
-porte les positions touchées, dans l'ordre d'insertion (modifié par
-`cleanup!`, qui compacte par échange).
+`HighsSparseVectorSum`: compensated accumulation (`HighsCDouble`) of a sparse
+vector during quad-precision rowwise pricing. `values` is dense and `nonzeroinds`
+holds the touched positions in order of insertion (compacted by `cleanup!` via swaps).
 
-Le tampon appartient à la `SparseMatrix` qui l'utilise (`quad_sum`) : il est
-réarmé à chaque appel de pricing quad au lieu d'être réalloué, contrairement à
-la variable locale de la source.
+The buffer belongs to the owning `SparseMatrix` (`quad_sum`) and is reset on each
+call to quad pricing without reallocating, unlike upstream's local variable.
 """
 mutable struct SparseVectorSum
     values::Vector{CDouble}
@@ -32,10 +30,9 @@ end
 
 SparseVectorSum() = SparseVectorSum(CDouble[], Int[])
 
-"""`HighsSparseVectorSum::setDimension` remis à zéro (la source part d'un
-objet neuf ; ici le tampon est réutilisé). Le remplissage est inconditionnel :
-la branche dense écrit des positions qui ne sont pas dans `nonzeroinds`, un
-zéro ciblé les laisserait fuiter dans l'appel suivant."""
+"""`HighsSparseVectorSum::setDimension` reset (upstream creates a fresh object;
+here the buffer is reused). Zeroing is unconditional: dense pricing writes
+positions not present in `nonzeroinds`, so partial clearing would leak into subsequent calls."""
 function reset!(s::SparseVectorSum, dim::Int)
     if length(s.values) != dim
         s.values = zeros(CDouble, dim)
@@ -48,10 +45,9 @@ function reset!(s::SparseVectorSum, dim::Int)
 end
 
 """
-`HighsSparseVectorSum::add(index, value)` : `values[index] += value`, ou
-insertion si la position était nulle. Un résultat nul est remplacé par
-`numeric_limits<double>::min()` (plus petit normal positif) pour que la
-position reste marquée comme non nulle ; `cleanup!` l'enlèvera.
+`HighsSparseVectorSum::add(index, value)`: `values[index] += value`, or
+insert if previously zero. A zero result is replaced by `floatmin(Float64)`
+(smallest positive normal) so the position remains marked non-zero; `cleanup!` removes it.
 """
 function add!(s::SparseVectorSum, index::Int, value::Float64)
     if Float64(s.values[index]) != 0.0
@@ -66,7 +62,7 @@ function add!(s::SparseVectorSum, index::Int, value::Float64)
     return s
 end
 
-"""`HighsSparseVectorSum::cleanup` : retire les valeurs `|x| ≤ kHighsTiny`."""
+"""`HighsSparseVectorSum::cleanup`: drops values where `|x| ≤ kHighsTiny`."""
 function cleanup!(s::SparseVectorSum)
     num_nz = length(s.nonzeroinds)
     for i ∈ num_nz:-1:1
@@ -74,8 +70,8 @@ function cleanup!(s::SparseVectorSum)
         if abs(Float64(s.values[pos])) <= kHighsTiny
             s.values[pos] = CDouble(0.0)
             num_nz -= 1
-            # Position 0-based `numNz` de la source → 1-based `num_nz + 1` ;
-            # quand elle vaut `i`, l'échange est un no-op (dernier élément).
+            # Upstream 0-based `numNz` position -> 1-based `num_nz + 1`;
+            # when equal to `i`, swap is a no-op (last element).
             s.nonzeroinds[i], s.nonzeroinds[num_nz + 1] =
                 s.nonzeroinds[num_nz + 1], s.nonzeroinds[i]
         end
@@ -88,7 +84,7 @@ end
     SparseMatrix(num_col, num_row, a_start, a_index, a_value)
     SparseMatrix(num_col, num_row)
 
-Matrice creuse de HiGHS, vue colonne par défaut (`a_*` en CSC 1-based).
+HiGHS sparse matrix, column-wise (CSC 1-based) by default.
 """
 mutable struct SparseMatrix
     format::Int
@@ -102,20 +98,20 @@ mutable struct SparseMatrix
 end
 
 function SparseMatrix(num_col::Int, num_row::Int)
-    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions négatives"))
+    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions must be non-negative"))
     return SparseMatrix(kColwise, num_col, num_row, fill(1, num_col + 1),
         Int[], Int[], Float64[], SparseVectorSum())
 end
 
 function SparseMatrix(num_col::Int, num_row::Int, a_start::Vector{Int},
     a_index::Vector{Int}, a_value::Vector{Float64})
-    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions négatives"))
+    (num_col >= 0 && num_row >= 0) || throw(ArgumentError("dimensions must be non-negative"))
     length(a_start) == num_col + 1 ||
-        throw(ArgumentError("a_start doit avoir num_col+1 entrées"))
+        throw(ArgumentError("a_start must have num_col + 1 entries"))
     length(a_index) == length(a_value) ||
-        throw(ArgumentError("a_index et a_value de tailles différentes"))
+        throw(ArgumentError("a_index and a_value must have identical lengths"))
     (isempty(a_start) || a_start[1] == 1) ||
-        throw(ArgumentError("a_start[1] doit valoir 1 (1-based)"))
+        throw(ArgumentError("a_start[1] must be 1 (1-based)"))
     return SparseMatrix(kColwise, num_col, num_row, copy(a_start), Int[],
         copy(a_index), copy(a_value), SparseVectorSum())
 end
@@ -137,7 +133,7 @@ function num_nz(m::SparseMatrix)
     end
 end
 
-"""`HighsSparseMatrix::range` (valeurs absolues)."""
+"""`HighsSparseMatrix::range` (absolute values)."""
 function range_abs(m::SparseMatrix)
     mn, mx = Inf, 0.0
     for iEl ∈ 1:num_nz(m)
@@ -148,7 +144,7 @@ function range_abs(m::SparseMatrix)
     return mn, mx
 end
 
-"""`HighsSparseMatrix::ensureRowwise` — transposition en place."""
+"""`HighsSparseMatrix::ensureRowwise` — in-place transposition."""
 function ensure_rowwise!(m::SparseMatrix)
     is_rowwise(m) && return m
     num_col, num_row, nnz = m.num_col, m.num_row, num_nz(m)
@@ -185,7 +181,7 @@ function ensure_rowwise!(m::SparseMatrix)
     return m
 end
 
-"""`HighsSparseMatrix::ensureColwise` — transposition en place."""
+"""`HighsSparseMatrix::ensureColwise` — in-place transposition."""
 function ensure_colwise!(m::SparseMatrix)
     is_colwise(m) && return m
     num_col, num_row, nnz = m.num_col, m.num_row, num_nz(m)
@@ -231,14 +227,14 @@ end
 """
     create_rowwise_partitioned!(dst, src, in_partition)
 
-`HighsSparseMatrix::createRowwisePartitioned` : vue rowwise où les entrées de
-chaque ligne sont rangées en deux sections, `[start, p_end)` pour les colonnes
-dans la partition et `[p_end, start[i+1])` pour les autres.
-`in_partition === nothing` place toutes les colonnes dans la partition.
+`HighsSparseMatrix::createRowwisePartitioned`: rowwise view where entries
+of each row are organized into two sections: `[start, p_end)` for columns
+in the partition, and `[p_end, start[i+1])` for the others.
+`in_partition === nothing` puts all columns into the partition.
 """
 function create_rowwise_partitioned!(dst::SparseMatrix, src::SparseMatrix,
     in_partition::Union{Nothing,Vector{Bool}}=nothing)
-    is_colwise(src) || throw(ArgumentError("source colwise requise"))
+    is_colwise(src) || throw(ArgumentError("colwise source matrix required"))
     all_in = in_partition === nothing
     num_col, num_row, nnz = src.num_col, src.num_row, num_nz(src)
     start = Vector{Int}(undef, num_row + 1)
@@ -289,15 +285,15 @@ end
 """
     update!(m, var_in, var_out, matrix)
 
-`HighsSparseMatrix::update` : `var_in` entre en base (sort de la partition),
-`var_out` en sort (entre dans la partition). `matrix` est la matrice colwise
-d'origine. Les variables logiques (`> num_col`) n'ont pas d'entrées.
+`HighsSparseMatrix::update`: `var_in` enters the basis (leaves partition),
+`var_out` leaves the basis (enters partition). `matrix` is the original
+colwise matrix. Logical variables (`> num_col`) have no explicit column entries.
 """
 function update!(m::SparseMatrix, var_in::Int, var_out::Int,
     matrix::SparseMatrix)
     m.format == kRowwisePartitioned ||
-        throw(ArgumentError("update exige la vue kRowwisePartitioned"))
-    is_colwise(matrix) || throw(ArgumentError("matrice colwise requise"))
+        throw(ArgumentError("update requires kRowwisePartitioned view"))
+    is_colwise(matrix) || throw(ArgumentError("colwise matrix required"))
     if var_in <= m.num_col
         for iEl ∈ matrix.start[var_in]:(matrix.start[var_in + 1] - 1)
             iRow = matrix.index[iEl]
@@ -330,11 +326,11 @@ end
 """
     Scale(col, row)
 
-Facteurs d'échelle colonne/ligne (`HighsScale`, HStruct.h) : la matrice
-échelonnée vaut `A[i,j] * col[j] * row[i]`. `cost` porte l'échelle d'objectif
-(1.0 pour les stratégies du simplexe), `strategy` la stratégie qui a produit
-les facteurs et `has_scaling` leur applicabilité. Les facteurs calculés sont
-des puissances de deux, donc exactement inversibles.
+Column/row scaling factors (`HighsScale`, HStruct.h): the scaled matrix
+equals `A[i,j] * col[j] * row[i]`. `cost` holds the objective scale factor
+(1.0 for simplex strategies), `strategy` the strategy that generated
+the factors, and `has_scaling` their validity. Factors are computed as powers of two,
+ensuring exact reversibility in floating-point arithmetic.
 """
 struct Scale
     col::Vector{Float64}
@@ -346,12 +342,12 @@ struct Scale
     strategy::Int
 end
 
-"""Scale prêt à l'emploi (tests NLA : facteurs fournis, applicables)."""
+"""Ready-to-use scale (NLA tests: factors provided and valid)."""
 Scale(col::Vector{Float64}, row::Vector{Float64}) =
     Scale(col, row, 1.0, true, length(col), length(row),
         kSimplexScaleStrategyOff)
 
-"""`HighsScale` vide (`HighsLp::clearScale`)."""
+"""Empty `HighsScale` (`HighsLp::clearScale`)."""
 Scale() = Scale(Float64[], Float64[], 1.0, false, 0, 0,
     kSimplexScaleStrategyOff)
 
@@ -441,7 +437,7 @@ function apply_row_scale!(m::SparseMatrix, scale::Scale)
     return m
 end
 
-"""`HighsSparseMatrix::unapplyScale` — division par `col[j] * row[i]`."""
+"""`HighsSparseMatrix::unapplyScale` — divide by `col[j] * row[i]`."""
 function unapply_scale!(m::SparseMatrix, scale::Scale)
     if is_colwise(m)
         for iCol ∈ 1:m.num_col
@@ -461,19 +457,19 @@ end
 
 """`HighsSparseMatrix::getRow` — `(indices, valeurs)`, copie."""
 function get_row(m::SparseMatrix, iRow::Int)
-    is_rowwise(m) || throw(ArgumentError("getRow exige la vue rowwise"))
+    is_rowwise(m) || throw(ArgumentError("getRow requires rowwise view"))
     return copy(m.index[m.start[iRow]:(m.start[iRow + 1] - 1)]),
     copy(m.value[m.start[iRow]:(m.start[iRow + 1] - 1)])
 end
 
-"""`HighsSparseMatrix::getCol` — `(indices, valeurs)`, copie."""
+"""`HighsSparseMatrix::getCol` — `(indices, values)`, copy."""
 function get_col(m::SparseMatrix, iCol::Int)
-    is_colwise(m) || throw(ArgumentError("getCol exige la vue colwise"))
+    is_colwise(m) || throw(ArgumentError("getCol requires colwise view"))
     return copy(m.index[m.start[iCol]:(m.start[iCol + 1] - 1)]),
     copy(m.value[m.start[iCol]:(m.start[iCol + 1] - 1)])
 end
 
-"""`HighsSparseMatrix::product` — `result = A x` (result remis à zéro)."""
+"""`HighsSparseMatrix::product` — `result = A x` (result reset to zero)."""
 function product!(result::Vector{Float64}, m::SparseMatrix,
     x::Vector{Float64})
     fill!(result, 0.0)
@@ -513,7 +509,7 @@ function product_transpose!(result::Vector{Float64}, m::SparseMatrix,
     return result
 end
 
-"""`HighsSparseMatrix::alphaProductPlusY` — `y += alpha * A x` (ou `A^T x`)."""
+"""`HighsSparseMatrix::alphaProductPlusY` — `y += alpha * A x` (or `A^T x`)."""
 function alpha_product_plus_y!(y::Vector{Float64}, alpha::Float64,
     m::SparseMatrix, x::Vector{Float64}; transpose::Bool=false)
     if is_colwise(m)
@@ -550,7 +546,7 @@ end
 
 """`HighsSparseMatrix::computeDot` — `a_use_col · array`."""
 function compute_dot(m::SparseMatrix, array::Vector{Float64}, use_col::Int)
-    is_colwise(m) || throw(ArgumentError("computeDot exige la vue colwise"))
+    is_colwise(m) || throw(ArgumentError("computeDot requires colwise view"))
     result = 0.0
     if use_col <= m.num_col
         for iEl ∈ m.start[use_col]:(m.start[use_col + 1] - 1)
@@ -565,7 +561,7 @@ end
 """`HighsSparseMatrix::collectAj` — `column += multiplier * a_use_col`."""
 function collect_aj!(m::SparseMatrix, column::HVector, use_col::Int,
     multiplier::Float64)
-    is_colwise(m) || throw(ArgumentError("collectAj exige la vue colwise"))
+    is_colwise(m) || throw(ArgumentError("collectAj requires colwise view"))
     if use_col <= m.num_col
         @inbounds for iEl ∈ m.start[use_col]:(m.start[use_col + 1] - 1)
             iRow = m.index[iEl]
@@ -591,13 +587,13 @@ function collect_aj!(m::SparseMatrix, column::HVector, use_col::Int,
 end
 
 """
-`HighsSparseMatrix::priceByColumn` — prix des coûts réduits colonne par
-colonne. `quad_precision` accumule chaque produit scalaire en `HighsCDouble`
-(la source a le drapeau en premier argument).
+`HighsSparseMatrix::priceByColumn` — reduced cost pricing column by column.
+`quad_precision` accumulates each dot product in `HighsCDouble`
+(upstream specifies this flag as the first argument).
 """
 function price_by_column!(m::SparseMatrix, result::HVector,
     column::HVector, quad_precision::Bool=false)
-    is_colwise(m) || throw(ArgumentError("priceByColumn exige la vue colwise"))
+    is_colwise(m) || throw(ArgumentError("priceByColumn requires colwise view"))
     result.count = 0
     @inbounds for iCol ∈ 1:m.num_col
         value = 0.0
@@ -624,12 +620,12 @@ end
 """`HighsSparseMatrix::priceByRowDenseResult` (double)."""
 function price_by_row_dense_result!(result::Vector{Float64}, m::SparseMatrix,
     column::HVector, from_index::Int)
-    is_rowwise(m) || throw(ArgumentError("priceByRowDenseResult exige rowwise"))
+    is_rowwise(m) || throw(ArgumentError("priceByRowDenseResult requires rowwise view"))
     @inbounds for ix ∈ from_index:column.count
         iRow = column.index[ix]
         multiplier = column.array[iRow]
-        # `p_end` est une fin exclusive (0-based côté source) → dernière
-        # position active = p_end - 1 en 1-based.
+        # `p_end` is exclusive in upstream (0-based) -> last active
+        # position in 1-based is `p_end - 1`.
         to_iEl = m.format == kRowwisePartitioned ? m.p_end[iRow] - 1 :
                  m.start[iRow + 1] - 1
         for iEl ∈ m.start[iRow]:to_iEl
@@ -642,11 +638,11 @@ function price_by_row_dense_result!(result::Vector{Float64}, m::SparseMatrix,
     return result
 end
 
-"""`HighsSparseMatrix::priceByRowDenseResult` (quad, surnom de la souche
-`vector<HighsCDouble>&`)."""
+"""`HighsSparseMatrix::priceByRowDenseResult` (quad precision, overloading
+`vector<HighsCDouble>&` variant)."""
 function price_by_row_dense_result!(result::Vector{CDouble}, m::SparseMatrix,
     column::HVector, from_index::Int)
-    is_rowwise(m) || throw(ArgumentError("priceByRowDenseResult exige rowwise"))
+    is_rowwise(m) || throw(ArgumentError("priceByRowDenseResult requires rowwise view"))
     @inbounds for ix ∈ from_index:column.count
         iRow = column.index[ix]
         multiplier = column.array[iRow]
@@ -666,16 +662,16 @@ end
     price_by_row_with_switch!(m, result, column, expected_density, from_index,
                               switch_density, quad_precision)
 
-`HighsSparseMatrix::priceByRowWithSwitch` : prix hyper-sparse rowwise, avec
-bascule éventuelle vers le prix dense. `from_index` est 1-based. En quad, les
-accumulations passent par `m.quad_sum` et `result.count` n'est pas mis à jour
-pendant la phase hyper-sparse (la source ne le fait que pour la densité de
-bascule, restée à 0).
+`HighsSparseMatrix::priceByRowWithSwitch`: hyper-sparse rowwise pricing,
+switching dynamically to dense pricing when density threshold is exceeded.
+`from_index` is 1-based. Under quad precision, accumulation uses `m.quad_sum`
+and `result.count` is not tracked during the hyper-sparse phase (upstream
+only checks density threshold against 0).
 """
 function price_by_row_with_switch!(m::SparseMatrix, result::HVector,
     column::HVector, expected_density::Float64, from_index::Int,
     switch_density::Float64, quad_precision::Bool=false)
-    is_rowwise(m) || throw(ArgumentError("priceByRowWithSwitch exige rowwise"))
+    is_rowwise(m) || throw(ArgumentError("priceByRowWithSwitch requires rowwise view"))
     sum = quad_precision ? reset!(m.quad_sum, m.num_col) : nothing
     next_index = from_index
     if expected_density <= kHyperPriceDensity
@@ -716,7 +712,7 @@ function price_by_row_with_switch!(m::SparseMatrix, result::HVector,
         cleanup!(sum)
     end
     if next_index <= column.count
-        # Prix incomplet : finir en dense, puis reconstruire les indices.
+        # Incomplete price: finish in dense, then reconstruct indices.
         if quad_precision
             price_by_row_dense_result!(sum.values, m, column, next_index)
             result.count = 0
@@ -744,8 +740,8 @@ function price_by_row_with_switch!(m::SparseMatrix, result::HVector,
             end
         end
     elseif quad_precision
-        # Prix complet : `nonzeroinds` (compacté par `cleanup`) porte les
-        # indices ; les valeurs sont reconverties en double.
+        # Complete price: `nonzeroinds` (compacted by `cleanup!`) contains
+        # non-zero indices; values are converted back to Float64.
         result.count = length(sum.nonzeroinds)
         for i ∈ 1:result.count
             iRow = sum.nonzeroinds[i]
@@ -758,7 +754,7 @@ function price_by_row_with_switch!(m::SparseMatrix, result::HVector,
     return result
 end
 
-"""`HighsSparseMatrix::priceByRow` — prix hyper-sparse rowwise pur."""
+"""`HighsSparseMatrix::priceByRow` — pure hyper-sparse rowwise pricing."""
 function price_by_row!(m::SparseMatrix, result::HVector, column::HVector,
     quad_precision::Bool=false)
     return price_by_row_with_switch!(m, result, column, -Inf, 1, Inf,

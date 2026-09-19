@@ -6,7 +6,8 @@ This page documents the performance benchmarks, test instances, and instructions
 
 ## Benchmark Scripts
 
-TinyHiGHS includes three standalone benchmark harnesses:
+TinyHiGHS includes four standalone benchmark harnesses plus a corpus-generation
+utility:
 
 ### 1. Cold-Start Benchmarks (Julia vs. HiGHS CLI)
 Compares single cold-start resolutions of `.lp` instances between TinyHiGHS and the official HiGHS binary:
@@ -28,6 +29,31 @@ Compares the C++ implementation of official HiGHS against the patched HiGHS C++ 
 ```bash
 ./contrib_highs/run_bench_cpp.sh
 ```
+
+### 4. Netlib correctness and timing smoke suite
+
+The curated Netlib corpus is solved from Julia and checked against published
+optimal objectives. The optional C++ comparison is skipped when no `highs`
+executable is installed:
+
+```bash
+julia --project=. bench/netlib_benchmarks.jl
+```
+
+### 5. Reproducible warm-start corpus generation
+
+The checked-in sequence snapshots are generated from `base.lp` and
+`operations.txt`.  The generator rewrites the base model with explicit
+`c0`, `c1`, ... objective terms, then replays every operation and verifies an
+optimal status before writing the first ten snapshots:
+
+```bash
+julia --project=. bench/regenerate_sequence_assets.jl
+```
+
+This explicit column order is required because replay logs address columns by
+numeric position, while a generic LP reader may otherwise discover
+objective-only variables before variables appearing in constraints.
 
 ---
 
@@ -59,6 +85,8 @@ Solving network flow instances from scratch (including initial basis setup and f
 
 ## Reproducibility Checklist
 
-- **Strict Determinism**: Both solvers perform the exact same sequence of simplex pivots and arrive at bit-for-bit identical objective values (0 ULP gap).
+- **Correctness is explicit**: the native C++ replay checks equal objectives and
+  iteration counts. The three-way Julia benchmark labels each TinyHiGHS result
+  `OK`, `DIFF`, or `NONOPT`; a speedup is not presented as a correctness claim.
 - **Zero JIT Bias**: Warm-start benchmarks run multiple dry iterations to precompile Julia methods before measuring steady-state resolve latency.
 - **Hardware Isolation**: Measurements were repeated with CPU governor pinned to avoid frequency scaling artifacts.
